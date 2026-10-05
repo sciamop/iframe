@@ -240,7 +240,8 @@ final class ClientSession {
                 if virtual == nil { hostLog("falling back to the existing display") }
             }
 
-            let display = try await findDisplay(id: virtual?.displayID)
+            let expected = virtual.map { VirtualScreen.pointSize(for: $0.request) }
+            let display = try await findDisplay(id: virtual?.displayID, expectedPoints: expected)
             let mode = CGDisplayCopyDisplayMode(display.displayID)
             let refresh = mode?.refreshRate ?? 60
             let fps = min(fpsLimit, refresh > 0 ? Int(refresh.rounded()) : 60)
@@ -329,11 +330,16 @@ final class ClientSession {
     }
 
     /// A freshly created virtual display can take a moment to show up in ScreenCaptureKit.
-    private func findDisplay(id: CGDirectDisplayID?) async throws -> SCDisplay {
+    /// ScreenCaptureKit can briefly report a stale display (old size) after a reshape, so for
+    /// virtual displays wait until it reports the expected point size too.
+    private func findDisplay(id: CGDirectDisplayID?, expectedPoints: (width: Int, height: Int)? = nil) async throws -> SCDisplay {
         for attempt in 0..<20 {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             if let id {
-                if let match = content.displays.first(where: { $0.displayID == id }) { return match }
+                if let match = content.displays.first(where: { $0.displayID == id }),
+                   expectedPoints.map({ abs(match.width - $0.width) <= 1 && abs(match.height - $0.height) <= 1 }) ?? true {
+                    return match
+                }
             } else {
                 let main = CGMainDisplayID()
                 let displays = content.displays.sorted {

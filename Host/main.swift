@@ -126,7 +126,10 @@ signalSource.setEventHandler {
 }
 signalSource.resume()
 
-dispatchMain()
+// A real run loop, not dispatchMain(): CoreGraphics delivers display reconfiguration
+// notifications through the main run loop. Without it, this process never sees a virtual
+// display change shape after its first mode, and capture targets a stale display.
+RunLoop.main.run()
 
 /// The browser client's files: --web-root, else bundled in the app, else the source tree (dev builds).
 func webRoot() -> URL? {
