@@ -54,7 +54,16 @@ final class HostServer {
     }
 
     private func accept(_ connection: NWConnection) {
-        let session = ClientSession(connection: connection, server: self, queue: queue)
+        accept(transport: MessageChannel(connection: connection, queue: queue))
+    }
+
+    /// Browser clients arrive from the web server's queue.
+    func accept(webSocket: WebSocketTransport) {
+        queue.async { self.accept(transport: webSocket) }
+    }
+
+    private func accept(transport: MessageTransport) {
+        let session = ClientSession(transport: transport, server: self, queue: queue)
         sessions[ObjectIdentifier(session)] = session
         session.start()
     }
@@ -91,7 +100,7 @@ final class HostServer {
 }
 
 final class ClientSession {
-    private let channel: MessageChannel
+    private let channel: MessageTransport
     private unowned let server: HostServer
     private let queue: DispatchQueue
     private var streamer: Streamer?
@@ -103,21 +112,17 @@ final class ClientSession {
     private var lastFocus = FocusWatcher.Focus.none
     private var streamDisplay: CGDirectDisplayID?
 
-    init(connection: NWConnection, server: HostServer, queue: DispatchQueue) {
-        self.channel = MessageChannel(connection: connection, queue: queue)
+    init(transport: MessageTransport, server: HostServer, queue: DispatchQueue) {
+        self.channel = transport
         self.server = server
         self.queue = queue
-        if case let .hostPort(host, _) = connection.endpoint { name = "\(host)" }
+        name = transport.peerDescription
     }
 
+    /// Transport callbacks may arrive on other queues; all session state lives on `queue`.
     func start() {
-        channel.onStateChange = { [weak self] state in
-            switch state {
-            case .failed, .cancelled: self?.teardown()
-            default: break
-            }
-        }
-        channel.onMessage = { [weak self] type, data in self?.handle(type, data) }
+        channel.onClosed = { [weak self] in self?.queue.async { self?.teardown() } }
+        channel.onMessage = { [weak self] type, data in self?.queue.async { self?.handle(type, data) } }
         channel.start()
     }
 
@@ -174,7 +179,7 @@ final class ClientSession {
         case .requestKeyframe:
             streamer?.requestKeyframe()
         case .ping:
-            channel.send(.pong, data)
+            channel.sendMessage(.pong, data)
         case .ack:
             if let id = r.u32() { streamer?.ack(id) }
         case .display:
@@ -194,7 +199,7 @@ final class ClientSession {
             hostLog("rejected \(name): wrong PIN or protocol version")
             queue.asyncAfter(deadline: .now() + server.authFailureDelay) { [weak self] in
                 guard let self else { return }
-                self.channel.send(.authFailed) { _ in self.queue.async { self.close(reason: "auth failed") } }
+                self.channel.sendMessage(.authFailed, Data()) { _ in self.queue.async { self.close(reason: "auth failed") } }
             }
             return
         }
@@ -258,12 +263,12 @@ final class ClientSession {
 
             let streamer = try Streamer(display: display, codec: codec, config: config, captureSize: capture)
             streamer.onFormat = { [weak self] codec, sets in
-                self?.channel.send(.format, Wire.format(codec: codec, parameterSets: sets))
+                self?.channel.sendMessage(.format, Wire.format(codec: codec, parameterSets: sets))
             }
             streamer.onFrame = { [weak self] id, pts, keyframe, data in
-                self?.channel.send(.frame, Wire.frame(id: id, pts: pts, keyframe: keyframe, payload: data))
+                self?.channel.sendMessage(.frame, Wire.frame(id: id, pts: pts, keyframe: keyframe, payload: data))
             }
-            streamer.onStats = { [weak self] stats in self?.channel.send(.stats, json: stats) }
+            streamer.onStats = { [weak self] stats in self?.channel.sendMessage(.stats, json: stats) }
             streamer.onStop = { [weak self] error in
                 self?.queue.async { self?.close(reason: "capture stopped: \(error?.localizedDescription ?? "unknown")") }
             }
@@ -276,7 +281,7 @@ final class ClientSession {
                     self.lastFocus = .none
                     self.server.injector.setDisplay(display.displayID)
                     let points = CGDisplayBounds(display.displayID).size
-                    self.channel.send(.welcome, json: Welcome(
+                    self.channel.sendMessage(.welcome, json: Welcome(
                         width: streamer.width, height: streamer.height,
                         pointWidth: points.width, pointHeight: points.height,
                         codec: streamer.codec, fps: fps,
@@ -320,7 +325,7 @@ final class ClientSession {
         w.f32(Float((focus.frame.minY - bounds.minY) / bounds.height))
         w.f32(Float(focus.frame.width / bounds.width))
         w.f32(Float(focus.frame.height / bounds.height))
-        channel.send(.textFocus, w.data)
+        channel.sendMessage(.textFocus, w.data)
     }
 
     /// A freshly created virtual display can take a moment to show up in ScreenCaptureKit.

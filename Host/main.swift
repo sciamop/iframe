@@ -1,6 +1,7 @@
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import SystemConfiguration
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
@@ -26,6 +27,9 @@ HOST OPTIONS
   --display <n>     display index, 0 = main (default 0)
   --inflight <n>    max unacknowledged frames before skipping (default 3)
   --pin <digits>    fixed PIN (default: random each launch)
+  --web-port <n>    HTTPS port for the browser client (default 7880)
+  --no-web          don't serve the browser client
+  --web-root <dir>  serve the browser client from this folder (default: bundled)
 
 PROBE OPTIONS
   --pin <digits>  --port <n>  --seconds <n>  --screen <w>x<h>[@scale]
@@ -81,13 +85,37 @@ do {
 }
 
 let addresses = localIPv4Addresses()
+let webPort = option("--web-port").flatMap(UInt16.init) ?? 7880
+var webServer: WebServer?
+var webURLs: [String] = []
+if !arguments.contains("--no-web") {
+    if let root = webRoot() {
+        let ips = addresses.map { String($0.split(separator: " ")[0]) }
+        // Not ProcessInfo.hostName: it does a reverse DNS lookup that can hang for minutes.
+        let bonjourName = (SCDynamicStoreCopyLocalHostName(nil) as String? ?? "localhost") + ".local"
+        do {
+            let certDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/iframe/web")
+            let identity = try WebServer.loadIdentity(directory: certDir, names: ["localhost", bonjourName],
+                                                      addresses: ["127.0.0.1"] + ips)
+            let web = WebServer(port: webPort, webRoot: root, identity: identity) { server.accept(webSocket: $0) }
+            try web.start()
+            webServer = web
+            webURLs = ([bonjourName] + ips).map { "https://\($0):\(webPort)" }
+        } catch {
+            hostLog("browser client disabled: \(error.localizedDescription)")
+        }
+    } else {
+        hostLog("browser client disabled: web client files not found (use --web-root)")
+    }
+}
+
 print("""
 
   iframe-host ready on port \(config.port)
   PIN: \(config.pin)
   Addresses: \(addresses.isEmpty ? "(none found)" : addresses.joined(separator: ", "))
   The iPad app finds this Mac automatically via Bonjour.
-
+\(webURLs.isEmpty ? "" : "  Browser client: " + webURLs.joined(separator: "  ") + "\n")
 """)
 
 let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
@@ -99,6 +127,17 @@ signalSource.setEventHandler {
 signalSource.resume()
 
 dispatchMain()
+
+/// The browser client's files: --web-root, else bundled in the app, else the source tree (dev builds).
+func webRoot() -> URL? {
+    let fm = FileManager.default
+    var candidates: [URL] = []
+    if let path = option("--web-root") { candidates.append(URL(fileURLWithPath: path)) }
+    if let resources = Bundle.main.resourceURL { candidates.append(resources.appendingPathComponent("web")) }
+    let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    candidates.append(exe.deletingLastPathComponent().appendingPathComponent("../../../Web"))  // .build/release/iframe-host
+    return candidates.first { fm.fileExists(atPath: $0.appendingPathComponent("index.html").path) }?.standardizedFileURL
+}
 
 func localIPv4Addresses() -> [String] {
     var result: [String] = []

@@ -2,11 +2,18 @@ import Foundation
 import Network
 
 /// Length-prefixed message framing over a TCP NWConnection.
-final class MessageChannel {
+final class MessageChannel: MessageTransport {
     let connection: NWConnection
     var onMessage: ((MsgType, Data) -> Void)?
     var onStateChange: ((NWConnection.State) -> Void)?
+    var onClosed: (() -> Void)?
     private let queue: DispatchQueue
+    private var closed = false
+
+    var peerDescription: String {
+        if case let .hostPort(host, _) = connection.endpoint { return "\(host)" }
+        return "\(connection.endpoint)"
+    }
 
     /// TCP tuned for interactive video: no Nagle delay, fast dead-peer detection,
     /// and the Wi-Fi video access category (WMM AC_VI) so frames jump the queue on the radio.
@@ -28,7 +35,18 @@ final class MessageChannel {
     }
 
     func start() {
-        connection.stateUpdateHandler = { [weak self] state in self?.onStateChange?(state) }
+        connection.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            self.onStateChange?(state)
+            switch state {
+            case .failed, .cancelled:
+                guard !self.closed else { return }
+                self.closed = true
+                self.onClosed?()
+            default:
+                break
+            }
+        }
         connection.start(queue: queue)
         receiveHeader()
     }
@@ -43,6 +61,10 @@ final class MessageChannel {
         withUnsafeBytes(of: UInt32(payload.count).bigEndian) { packet.append(contentsOf: $0) }
         packet.append(payload)
         connection.send(content: packet, completion: .contentProcessed { error in completion?(error) })
+    }
+
+    func sendMessage(_ type: MsgType, _ payload: Data, completion: ((Bool) -> Void)?) {
+        send(type, payload) { error in completion?(error == nil) }
     }
 
     func send<T: Encodable>(_ type: MsgType, json value: T) {

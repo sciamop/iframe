@@ -1,0 +1,176 @@
+:root {
+  --teal: #2EE6D6;
+  --ink: #04161A;
+  --bg: #FFFFFF;
+  --field: #F2F2F7;
+  --separator: rgba(60, 60, 67, 0.29);
+  --label: #000000;
+  --secondary: rgba(60, 60, 67, 0.6);
+  --tertiary: rgba(60, 60, 67, 0.3);
+  --disabled: rgba(142, 142, 147, 0.3);
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --field: #1C1C1E;
+    --separator: rgba(84, 84, 88, 0.6);
+    --label: #FFFFFF;
+    --secondary: rgba(235, 235, 245, 0.6);
+    --tertiary: rgba(235, 235, 245, 0.3);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--label);
+  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+[hidden] { display: none !important; }
+
+/* Connect screen */
+.column {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 56px 32px 20px;
+}
+
+.brand { text-align: center; margin-bottom: 32px; }
+.mark { width: 128px; height: 128px; object-fit: contain; }
+.brand h1 { font-size: 34px; font-weight: 700; margin: 16px 0 12px; }
+.tagline { font-size: 11px; color: var(--tertiary); margin: 0; }
+
+form#form { display: flex; flex-direction: column; gap: 24px; }
+
+.field { display: flex; flex-direction: column; gap: 8px; }
+.label { color: var(--secondary); }
+
+input, select {
+  font: inherit;
+  color: var(--label);
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--field);
+  border: 1px solid var(--separator);
+  border-radius: 12px;
+  outline: none;
+  appearance: none;
+}
+input:focus, select:focus { border: 2px solid var(--teal); padding: 13px 15px; }
+#pin { font-variant-numeric: tabular-nums; letter-spacing: 0.08em; }
+
+.select { position: relative; }
+.select::after {
+  content: "⌃⌄";
+  position: absolute; right: 16px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--secondary); font-size: 11px; letter-spacing: -2px; pointer-events: none;
+}
+
+.check { display: flex; align-items: center; gap: 10px; color: var(--secondary); cursor: pointer; }
+.check input { width: 20px; height: 20px; padding: 0; border-radius: 6px; flex: none; position: relative; }
+.check input:checked { background: var(--teal); border-color: var(--teal); }
+.check input:checked::after {
+  content: "✓"; position: absolute; inset: 0; display: grid; place-items: center;
+  color: var(--ink); font-size: 13px; font-weight: 700;
+}
+
+.pill {
+  margin-top: 8px;
+  height: 56px;
+  border: none;
+  border-radius: 28px;
+  background: var(--teal);
+  color: var(--ink);
+  font: 600 17px/1 inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+.pill:disabled { background: var(--disabled); color: var(--secondary); cursor: default; }
+.pill.small { height: 44px; width: 100%; margin: 8px 0 0; font-size: 15px; }
+
+.footer hr { border: none; border-top: 1px solid var(--separator); margin: 40px 0 12px; }
+.footer p { text-align: center; color: var(--tertiary); font-size: 13px; margin: 0; }
+
+.notice {
+  margin-bottom: 24px; padding: 14px 16px; border-radius: 12px;
+  background: var(--field); border: 1px solid #FF6B6B; color: var(--label);
+}
+
+/* Stream */
+#stream { position: fixed; inset: 0; background: #000; }
+#screen {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  display: block;
+  cursor: none;            /* the Mac's cursor is in the video */
+  touch-action: none;
+}
+
+.toolbar {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 12px; z-index: 2;
+}
+.circle {
+  width: 48px; height: 48px; border-radius: 50%;
+  border: none; background: rgba(0, 0, 0, 0.45); color: #fff;
+  font-size: 20px; line-height: 48px; cursor: pointer;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.circle.active { background: var(--teal); color: var(--ink); }
+
+.grabber {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  width: 88px; height: 28px; border: none; background: transparent; cursor: pointer; z-index: 2;
+}
+.grabber span {
+  display: block; width: 44px; height: 5px; margin: 0 auto; border-radius: 3px;
+  background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+}
+
+.stats {
+  position: absolute; top: 72px; left: 50%; transform: translateX(-50%);
+  margin: 0; padding: 8px 10px; border-radius: 8px;
+  background: rgba(0, 0, 0, 0.6); color: #fff;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  pointer-events: none; z-index: 2;
+}
+
+/* Connecting card */
+.overlay {
+  position: fixed; inset: 0; z-index: 10;
+  background: rgba(0, 0, 0, 0.5);
+  display: grid; place-items: center;
+}
+.card, dialog {
+  background: var(--bg); color: var(--label);
+  border: none; border-radius: 20px; padding: 40px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  text-align: center; min-width: 280px;
+}
+dialog { max-width: 420px; }
+dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+.card-title { font-size: 17px; font-weight: 600; margin: 24px 0 8px; }
+dialog .card-title { margin-top: 0; }
+#errorText { color: var(--secondary); white-space: pre-wrap; }
+.link { background: none; border: none; color: var(--secondary); font: inherit; cursor: pointer; margin-top: 8px; }
+
+/* The mark streaking up and to the right, with a short trail (as in the iPad app). */
+.loader { position: relative; width: 80px; height: 80px; margin: 0 auto; overflow: hidden; }
+.loader img {
+  position: absolute; left: 12px; top: 12px; width: 56px; height: 56px;
+  animation: streak 0.6s ease-in-out infinite;
+}
+.loader img:nth-child(2) { opacity: 0.7; animation-delay: -0.06s; }
+.loader img:nth-child(3) { opacity: 0.4; animation-delay: -0.12s; }
+@keyframes streak {
+  from { transform: translate(-80px, 80px); }
+  to   { transform: translate(80px, -80px); }
+}

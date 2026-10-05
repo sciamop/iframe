@@ -25,6 +25,8 @@ echo "==> assembling $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/iframe-host"
 cp "$ROOT/Design/iFrame.icns" "$APP/Contents/Resources/iFrame.icns"
+rm -rf "$APP/Contents/Resources/web"
+cp -R "$ROOT/Web" "$APP/Contents/Resources/web"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

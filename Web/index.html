@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>iFrame</title>
+  <link rel="icon" href="icon-256.png">
+  <link rel="apple-touch-icon" href="icon-256.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Connect screen: same layout as the iPad app (and Pinry Saver's settings). -->
+  <main id="connect" class="column">
+    <header class="brand">
+      <img src="iframe-mark.png" alt="" class="mark">
+      <h1>iFrame</h1>
+      <p class="tagline" id="hostline">Your Mac, in this browser.</p>
+    </header>
+
+    <div id="unsupported" class="notice" hidden></div>
+
+    <form id="form" autocomplete="off">
+      <label class="field">
+        <span class="label">PIN:</span>
+        <input id="pin" inputmode="numeric" pattern="[0-9]*" placeholder="Shown by iframe-host" required>
+      </label>
+
+      <label class="field">
+        <span class="label">Mac display:</span>
+        <span class="select">
+          <select id="mode">
+            <option value="match">Match this window · sharpest</option>
+            <option value="larger">Larger text</option>
+            <option value="space">More space</option>
+            <option value="mac">Use the Mac's own display</option>
+          </select>
+        </span>
+      </label>
+
+      <label class="check">
+        <input type="checkbox" id="swap">
+        <span>Use Ctrl as ⌘ (for Windows and Linux keyboards)</span>
+      </label>
+
+      <button id="connectButton" class="pill" type="submit">Connect</button>
+    </form>
+
+    <footer class="footer">
+      <hr>
+      <p>Click the stream to control the Mac. Fullscreen captures system shortcuts in Chrome and Edge.</p>
+    </footer>
+  </main>
+
+  <!-- Streaming -->
+  <section id="stream" hidden>
+    <canvas id="screen"></canvas>
+    <div id="toolbar" class="toolbar">
+      <button class="circle" id="fullscreenButton" title="Fullscreen (captures system shortcuts)">⤢</button>
+      <button class="circle" id="statsButton" title="Stats">◔</button>
+      <button class="circle" id="disconnectButton" title="Disconnect">✕</button>
+      <button class="circle" id="hideButton" title="Hide toolbar">⌃</button>
+    </div>
+    <button id="grabber" class="grabber" title="Show toolbar" hidden><span></span></button>
+    <pre id="stats" class="stats" hidden></pre>
+  </section>
+
+  <!-- Connecting card -->
+  <div id="connecting" class="overlay" hidden>
+    <div class="card">
+      <div class="loader"><img src="iframe-mark.png" alt=""><img src="iframe-mark.png" alt=""><img src="iframe-mark.png" alt=""></div>
+      <p class="card-title" id="connectingText">Connecting…</p>
+      <button class="link" id="cancelButton">Cancel</button>
+    </div>
+  </div>
+
+  <dialog id="errorDialog">
+    <p class="card-title">Couldn't connect</p>
+    <p id="errorText"></p>
+    <form method="dialog"><button class="pill small">OK</button></form>
+  </dialog>
+
+  <script src="keymap.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

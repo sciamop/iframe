@@ -1,6 +1,6 @@
 # iFrame
 
-Low-latency Mac → iPad remote desktop for Apple silicon. It sends a video stream instead of pixel tiles.
+Low-latency remote desktop for Apple silicon Macs: a native iPad app, plus a browser client for Mac, Windows and Linux. It sends a video stream instead of pixel tiles.
 
 **Requirements:** a Mac with Apple silicon running macOS 14 or later (developed on an M4 Mac mini, macOS 15), an iPad on iPadOS 17 or later, Xcode, and [XcodeGen](https://github.com/yonaskolb/XcodeGen) plus `rsvg-convert` and ImageMagick if you regenerate icons (`brew install xcodegen librsvg imagemagick`).
 
@@ -42,6 +42,21 @@ GUI login session, so it works headless and no matter how you reach the Mac. The
 survive rebuilds. Over SSH, run `security unlock-keychain` before reinstalling, or signing fails.
 
 Test without an iPad: `.build/release/iframe-host probe 127.0.0.1 --pin <PIN> --screen 2732x2048@2`
+
+## Browser client (Mac, Windows, Linux)
+
+The host also serves a browser client over HTTPS, starting automatically with it:
+
+```
+https://<your-mac>.local:7880     (or https://<mac-ip>:7880)
+```
+
+Open it in a current Chrome, Edge, Firefox or Safari, enter the PIN, and connect. The Mac creates a virtual display matching your browser window (it reshapes as you resize or go fullscreen), at 120 Hz on high-refresh monitors.
+
+- **Certificate:** browsers only allow hardware video decoding (WebCodecs) on secure pages, so the host makes a self-signed certificate on first run (`~/.config/iframe/web/`). Your browser warns once per machine. Choose *Advanced → Proceed* (Chrome/Edge) or *Accept the Risk* (Firefox).
+- **Keyboard:** "Use Ctrl as ⌘" (on by default on Windows/Linux) makes Ctrl+C/V/Z etc. work as on a Mac. In fullscreen, Chrome and Edge also capture Esc and system shortcuts.
+- **Video:** H.264, which every browser decodes in hardware. The iPad app keeps HEVC.
+- `--web-port <n>` changes the port; `--no-web` turns the browser client off. Files live in `Web/`.
 
 ## Client (iPad)
 
