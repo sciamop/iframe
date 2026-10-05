@@ -20,11 +20,12 @@
       </section>
       <section class="connect-card" aria-labelledby="connect-title">
         <div class="card-heading"><h2 id="connect-title">Connect to your Mac</h2><span class="version">01</span></div>
+        <div id="bookmarks-section" hidden><label id="bookmarks-label">SAVED MACS</label><div id="bookmarks" class="bookmarks" role="list" aria-labelledby="bookmarks-label"></div></div>
         <label for="discovered">NEARBY MACS</label>
         <select id="discovered"><option value="">Looking for Macs on your network…</option></select>
         <p class="hint" id="discovery-hint">Or enter an IP address or hostname below.</p>
         <form id="connect-form">
-          <div class="address-row"><div><label for="host">MAC ADDRESS</label><input id="host" placeholder="192.168.1.24 or Mac-mini.local" required autocomplete="off" spellcheck="false"></div><div><label for="port">PORT</label><input id="port" type="number" value="7878" min="1" max="65535" required></div></div>
+          <div class="address-row"><div><label for="host">MAC ADDRESS</label><input id="host" placeholder="192.168.1.24 or Mac-mini.local" required autocomplete="off" spellcheck="false"></div><div><label for="port">PORT</label><input id="port" type="number" value="7878" min="1" max="65535" required></div><div><label aria-hidden="true">&nbsp;</label><button id="bookmark" type="button" class="bookmark-toggle" aria-pressed="false">☆ Save</button></div></div>
           <label for="pin">HOST PIN</label><input id="pin" type="password" placeholder="PIN from iframe-host" autocomplete="off" maxlength="256">
           <div class="separator"></div>
           <div class="settings-row"><div><label for="resolution">DISPLAY</label><select id="resolution"><option value="screen">Match this screen</option><option value="1920x1080">1920 × 1080</option><option value="2560x1440">2560 × 1440</option><option value="3840x2160">3840 × 2160</option></select></div><div><label for="fps">FRAME RATE</label><select id="fps"><option value="30">30 fps</option><option value="60" selected>60 fps</option><option value="120">120 fps</option></select></div></div>

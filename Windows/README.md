@@ -6,10 +6,10 @@ A Windows 10/11 x64 client for the existing `iframe-host` on your Mac. The porta
 
 1. Start the Mac host using the instructions in the repository README. Grant its Screen Recording and Accessibility permissions.
 2. Open `iFrame-0.1.0-Windows-x64.exe` from `Windows/dist`.
-3. Choose a nearby Mac, or enter its IP address, Tailscale address, or hostname. The default TCP port is **7878**. Discovery uses mDNS on the local network; manual addresses also work when discovery is unavailable.
+3. Choose a nearby Mac, or enter its IP address, Tailscale address, or hostname. The default TCP port is **7878**. Discovery uses mDNS on the local network; manual addresses also work when discovery is unavailable. Select **☆ Save** next to the port to keep an address under **Saved Macs**; select a saved Mac to fill in its address and port.
 4. Enter the host PIN, choose the display size/density, and click **Connect to Mac**.
 
-The app remembers the address and display settings, but never saves the PIN. Preferences are stored in Electron's per-user app data directory. Windows may ask to allow local network access for discovery. The distributed executable is unsigned.
+The app remembers saved Macs, the last address and display settings, but never saves the PIN. Preferences are stored in Electron's per-user app data directory. Windows may ask to allow local network access for discovery. The distributed executable is unsigned.
 
 **Retina** requests a virtual Mac display at the selected pixel size with two pixels per Mac point. **Native** gives more desktop space. **Mirror** uses the Mac's existing display. Display size is chosen at connection time; resizing the app scales the picture without restarting the Mac display. Reconnect to change resolution or density.
 

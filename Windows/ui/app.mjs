@@ -51,7 +51,8 @@ $('text-dialog').addEventListener('close', () => {
 api.onState(state => {
   const connecting = state.phase === 'connecting';
   $('connect').disabled = connecting; $('cancel').hidden = !connecting;
-  for (const input of document.querySelectorAll('#connect-form input, #connect-form select, #discovered')) input.disabled = connecting;
+  for (const input of document.querySelectorAll('#connect-form input, #connect-form select, #discovered, #bookmark, #bookmarks button')) input.disabled = connecting;
+  if (!connecting) updateBookmarkButton();
   if (state.phase === 'streaming') {
     active = true; welcome = state.welcome;
     $('connect-page').hidden = true; $('stream-page').hidden = false; $('waiting').hidden = false;
@@ -86,8 +87,44 @@ api.onHosts(showHosts); api.hosts().then(showHosts);
 api.onDiscoveryWarning(message => { $('discovery-hint').textContent = message; });
 $('discovered').onchange = () => {
   const host = knownHosts.find(h => h.id === $('discovered').value); if (!host) return;
-  $('host').value = host.host; $('port').value = host.port; $('pin').focus();
+  $('host').value = host.host; $('port').value = host.port; updateBookmarkButton(); $('pin').focus();
 };
+// Saved Macs: name, address and port only. The PIN is never stored.
+let bookmarks = [];
+try { bookmarks = JSON.parse(localStorage.getItem('iframe-bookmarks') ?? '[]').filter(b => typeof b?.host === 'string' && Number.isInteger(b.port)); } catch {}
+const address = () => ({host: $('host').value.trim(), port: Number($('port').value)});
+const bookmarkIndex = ({host, port}) => bookmarks.findIndex(b => b.host.toLowerCase() === host.toLowerCase() && b.port === port);
+function showBookmarks() {
+  try { localStorage.setItem('iframe-bookmarks', JSON.stringify(bookmarks)); } catch {}
+  $('bookmarks-section').hidden = !bookmarks.length;
+  $('bookmarks').replaceChildren(...bookmarks.map(b => {
+    const item = document.createElement('div'), open = document.createElement('button'), remove = document.createElement('button');
+    const name = document.createElement('span'), where = document.createElement('small');
+    item.className = 'bookmark'; item.setAttribute('role', 'listitem');
+    open.type = remove.type = 'button'; open.className = 'open'; remove.className = 'remove';
+    name.textContent = b.name; where.textContent = b.name === b.host ? `port ${b.port}` : `${b.host}:${b.port}`; open.append(name, where);
+    open.title = `Fill in ${b.host}:${b.port}`; remove.textContent = '×'; remove.setAttribute('aria-label', `Remove ${b.name}`);
+    open.onclick = () => { $('host').value = b.host; $('port').value = b.port; updateBookmarkButton(); $('pin').focus(); };
+    remove.onclick = () => { bookmarks = bookmarks.filter(x => x !== b); showBookmarks(); };
+    item.append(open, remove); return item;
+  }));
+  updateBookmarkButton();
+}
+function updateBookmarkButton() {
+  const a = address(), saved = bookmarkIndex(a) >= 0;
+  $('bookmark').disabled = !a.host || !Number.isInteger(a.port) || a.port < 1 || a.port > 65535;
+  $('bookmark').textContent = saved ? '★ Saved' : '☆ Save';
+  $('bookmark').setAttribute('aria-pressed', String(saved));
+  $('bookmark').title = saved ? 'Remove this Mac from saved Macs' : 'Save this address';
+}
+$('bookmark').onclick = () => {
+  const a = address(), i = bookmarkIndex(a);
+  if (i >= 0) bookmarks.splice(i, 1);
+  else bookmarks.push({...a, name: knownHosts.find(h => h.host === a.host && h.port === a.port)?.name ?? a.host});
+  showBookmarks();
+};
+$('host').addEventListener('input', updateBookmarkButton); $('port').addEventListener('input', updateBookmarkButton);
+showBookmarks();
 setInterval(() => {
   if (active) {
     const n = v => Number.isFinite(v) ? v.toFixed(1) : '—';
