@@ -1,8 +1,10 @@
 # iFrame
 
-Low-latency Mac → iPad remote desktop for Apple silicon. It sends a video stream instead of pixel tiles.
+Low-latency Mac → iPad or Windows remote desktop for Apple silicon. It sends a video stream instead of pixel tiles.
 
-**Requirements:** a Mac with Apple silicon running macOS 14 or later (developed on an M4 Mac mini, macOS 15), an iPad on iPadOS 17 or later, Xcode, and [XcodeGen](https://github.com/yonaskolb/XcodeGen) plus `rsvg-convert` and ImageMagick if you regenerate icons (`brew install xcodegen librsvg imagemagick`).
+**Host requirements:** a Mac with Apple silicon running macOS 14 or later (developed on an M4 Mac mini, macOS 15) and Xcode command-line tools.
+
+**Clients:** an iPad on iPadOS 17 or later, or a Windows 10/11 x64 PC. Building the iPad app requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen), plus `rsvg-convert` and ImageMagick if you regenerate icons (`brew install xcodegen librsvg imagemagick`). The [Windows client](Windows/README.md) uses Node.js to build and includes its runtime when packaged.
 
 ```
 Mac (iframe-host)                                   iPad (iFrame app)
@@ -77,6 +79,24 @@ See [Linux/README.md](Linux/README.md) for scaling, key mapping and hotkeys.
 | Long-press, then drag | Click-drag |
 | Two-finger drag | Scroll |
 | Three-finger tap | Toolbar (on-screen keyboard, stats, disconnect) |
+
+## Client (Windows)
+
+The [Windows client](Windows/README.md) connects to the same Mac host using H.264. It includes
+Mac discovery, PIN login, virtual-display settings, keyboard/mouse input, fullscreen, and live stats.
+
+On Windows 10/11 x64 with Node.js 22.12 or newer:
+
+```powershell
+cd Windows
+npm ci
+npm start
+# Build a standalone portable Windows executable:
+npm run dist
+```
+
+Open `Windows/dist/iFrame-0.1.0-Windows-x64.exe`, choose or enter your Mac's address, and enter
+the host PIN. The packaged app includes its runtime. See [Windows controls, testing, and limitations](Windows/README.md).
 
 ## Notes
 - The virtual display uses `CGVirtualDisplay`, a private CoreGraphics API (the same one DeskPad, BetterDisplay and Chromium's tests use). A future macOS could change it; run the host with `--no-virtual` to stream the Mac's existing display instead.
