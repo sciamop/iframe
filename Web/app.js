@@ -5,7 +5,7 @@
 // Video arrives as H.264 access units (length-prefixed NALs); WebCodecs decodes them on the GPU.
 
 const MSG = {
-  welcome: 0x01, format: 0x02, frame: 0x03, stats: 0x04, pong: 0x05, authFailed: 0x06, textFocus: 0x07,
+  welcome: 0x01, format: 0x02, frame: 0x03, stats: 0x04, pong: 0x05, authFailed: 0x06, textFocus: 0x07, cursor: 0x08,
   hello: 0x10, mouseMove: 0x11, mouseButton: 0x12, scroll: 0x13, key: 0x14, text: 0x15,
   requestKeyframe: 0x16, ping: 0x17, ack: 0x18, display: 0x19,
 };
@@ -37,6 +37,8 @@ const state = {
   buttonsDown: new Set(),
   lastDisplay: '',
   maxFPS: 60,
+  cursorShape: null,                // latest Mac cursor: { hotspotX, hotspotY, width, height, bitmap }
+  cursorVersion: 0,
 };
 
 // ---------------------------------------------------------------- binary helpers
@@ -150,6 +152,7 @@ async function connect() {
       supportsHEVC: false,      // H.264 decodes everywhere; HEVC in WebCodecs is still patchy
       maxFPS: state.maxFPS,
       display,
+      localCursor: true,        // we draw the Mac's pointer as the browser cursor (zero latency)
     }));
     state.timers.push(setInterval(tick, 1000));
   };
@@ -185,6 +188,8 @@ function teardown() {
   state.streaming = false;
   state.welcome = null;
   state.hostStats = null;
+  state.cursorShape = null;
+  canvas.style.cursor = '';
   $('connecting').hidden = true;
   $('stream').hidden = true;
   $('connect').hidden = false;
@@ -199,7 +204,21 @@ function handle(bytes) {
     case MSG.welcome:
       state.welcome = decodeJSON(payload);
       if (!state.streaming) enterStream();
+      applyCursor();
       break;
+    case MSG.cursor: {
+      const shape = {
+        hotspotX: view.getUint16(0), hotspotY: view.getUint16(2),
+        width: view.getUint16(4), height: view.getUint16(6),
+      };
+      const version = ++state.cursorVersion;
+      createImageBitmap(new Blob([payload.slice(8)], { type: 'image/png' })).then((bitmap) => {
+        if (version !== state.cursorVersion) return;  // a newer shape already arrived
+        state.cursorShape = { ...shape, bitmap };
+        applyCursor();
+      }).catch(() => {});
+      break;
+    }
     case MSG.authFailed:
       state.userClosed = true;
       teardown();
@@ -229,6 +248,32 @@ function handle(bytes) {
     default:
       break;  // textFocus: desktop clients have a real keyboard
   }
+}
+
+// ---------------------------------------------------------------- cursor
+
+/** Renders the Mac's cursor as the browser's own pointer, scaled to how big the Mac's screen
+ *  appears in this window, so it matches what you'd see on the Mac and moves with no delay. */
+function applyCursor() {
+  const shape = state.cursorShape, welcome = state.welcome;
+  if (!shape || !welcome || !canvas.width) return;
+  const rect = canvas.getBoundingClientRect();
+  const shownWidth = canvas.width * Math.min(rect.width / canvas.width, rect.height / canvas.height);
+  const scale = shownWidth / welcome.pointWidth;          // CSS px per Mac point
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = Math.min(shape.width * scale, 128), cssH = Math.min(shape.height * scale, 128);
+
+  const render = (pixelRatio) => {
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(cssW * pixelRatio));
+    c.height = Math.max(1, Math.round(cssH * pixelRatio));
+    c.getContext('2d').drawImage(shape.bitmap, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  };
+  const hx = Math.min(Math.round(shape.hotspotX * scale), Math.round(cssW) - 1);
+  const hy = Math.min(Math.round(shape.hotspotY * scale), Math.round(cssH) - 1);
+  const sharp = render(dpr), plain = render(1);
+  canvas.style.cursor = `image-set(url("${sharp}") ${dpr}x) ${hx} ${hy}, url("${plain}") ${hx} ${hy}, default`;
 }
 
 // ---------------------------------------------------------------- video
@@ -318,6 +363,7 @@ function onDecoded(frame) {
   if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
     canvas.width = frame.displayWidth;
     canvas.height = frame.displayHeight;
+    applyCursor();
   }
   ctx.drawImage(frame, 0, 0);
   frame.close();
@@ -399,6 +445,7 @@ window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     if (!state.streaming) return;
+    applyCursor();
     const display = displayRequest();
     const key = JSON.stringify(display);
     if (!display || key === state.lastDisplay) return;

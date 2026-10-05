@@ -110,7 +110,7 @@ input:focus, select:focus { border: 2px solid var(--teal); padding: 13px 15px; }
   width: 100%; height: 100%;
   object-fit: contain;
   display: block;
-  cursor: none;            /* the Mac's cursor is in the video */
+  cursor: default;         /* replaced by the Mac's cursor shape once it arrives */
   touch-action: none;
 }
 

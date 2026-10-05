@@ -112,6 +112,7 @@ final class ClientSession {
     private var focusTimer: DispatchSourceTimer?
     private var lastFocus = FocusWatcher.Focus.none
     private var streamDisplay: CGDirectDisplayID?
+    private var cursorWatcher: CursorWatcher?
     private var inputCounts: [String: Int] = [:]
     private var lastInputLog = Date()
 
@@ -145,6 +146,8 @@ final class ClientSession {
         streamer = nil
         focusTimer?.cancel()
         focusTimer = nil
+        cursorWatcher?.stop()
+        cursorWatcher = nil
         if sleepAssertion != 0 {
             IOPMAssertionRelease(sleepAssertion)
             sleepAssertion = 0
@@ -220,6 +223,20 @@ final class ClientSession {
         self.hello = hello
         restartStream(display: hello.display)
         startFocusWatcher()
+        if hello.localCursor == true {
+            let watcher = CursorWatcher()
+            watcher.onChange = { [weak self] shape in
+                var w = ByteWriter(capacity: shape.png.count + 8)
+                w.u16(UInt16(clamping: shape.hotspotX))
+                w.u16(UInt16(clamping: shape.hotspotY))
+                w.u16(UInt16(clamping: shape.pointWidth))
+                w.u16(UInt16(clamping: shape.pointHeight))
+                w.bytes(shape.png)
+                self?.channel.sendMessage(.cursor, w.data)
+            }
+            watcher.start()
+            cursorWatcher = watcher
+        }
     }
 
     /// Periodic summary of input received, so input problems show up in the log.
@@ -289,7 +306,8 @@ final class ClientSession {
                 maxBitrate: Int(startMbps * 1.5 * 1_000_000),
                 maxInflight: server.config.maxInflight)
 
-            let streamer = try Streamer(display: display, codec: codec, config: config, captureSize: capture)
+            let streamer = try Streamer(display: display, codec: codec, config: config, captureSize: capture,
+                                        showsCursor: hello.localCursor != true)
             streamer.onFormat = { [weak self] codec, sets in
                 self?.channel.sendMessage(.format, Wire.format(codec: codec, parameterSets: sets))
             }
@@ -315,6 +333,7 @@ final class ClientSession {
                         codec: streamer.codec, fps: fps,
                         hostName: Host.current().localizedName ?? "Mac",
                         isVirtual: virtual != nil))
+                    self.cursorWatcher?.resend()  // the client rebuilds its cursor for the new scale
                     continuation.resume(returning: true)
                 }
             }

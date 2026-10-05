@@ -22,6 +22,7 @@ enum MsgType: UInt8 {
     case pong = 0x05             // echo of ping payload
     case authFailed = 0x06
     case textFocus = 0x07        // editable u8, x f32, y f32, w f32, h f32 (normalized over the stream)
+    case cursor = 0x08           // hotspot x u16, y u16, size w u16, h u16 (Mac points), PNG at 2x
     // client -> host
     case hello = 0x10            // JSON Hello
     case mouseMove = 0x11        // x f32, y f32 (normalized 0...1)
@@ -49,6 +50,8 @@ struct Hello: Codable {
     var supportsHEVC: Bool
     var maxFPS: Int
     var display: DisplayRequest?
+    /// The client draws the pointer itself from `cursor` messages; capture omits it.
+    var localCursor: Bool?
 }
 
 /// The client's screen in pixels (current orientation). The host creates a virtual display
