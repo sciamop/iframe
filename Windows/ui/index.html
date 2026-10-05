@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>iFrame</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="connect-page">
+    <header class="brand"><img src="../assets/icon.png" alt="" width="46" height="46"><span>iFrame</span><span class="platform">FOR WINDOWS</span></header>
+    <div class="connection-layout">
+      <section class="intro">
+        <div class="eyebrow"><span class="dot"></span> YOUR MAC, WITHIN REACH</div>
+        <h1>A little window.<br>A whole Mac.</h1>
+        <p class="lead">Bring your Mac desktop to Windows.<br>Connect, settle in, and make yourself at home.</p>
+        <div class="desktop-art" aria-hidden="true"><div class="art-window"><div class="art-bar"><i></i><i></i><i></i><span>iFrame</span></div><div class="art-desktop"><div class="orb one"></div><div class="orb two"></div><div class="art-card"><span></span><b></b><b></b><b></b></div><div class="art-dock"><i></i><i></i><i></i><i></i><i></i></div></div></div><span class="art-caption">A familiar desktop. A different screen.</span></div>
+        <p class="network-note">Use a trusted local network or Tailscale.<br>iFrame uses a PIN; the stream is not encrypted.</p>
+      </section>
+      <section class="connect-card" aria-labelledby="connect-title">
+        <div class="card-heading"><h2 id="connect-title">Connect to your Mac</h2><span class="version">01</span></div>
+        <label for="discovered">NEARBY MACS</label>
+        <select id="discovered"><option value="">Looking for Macs on your network…</option></select>
+        <p class="hint" id="discovery-hint">Or enter an IP address or hostname below.</p>
+        <form id="connect-form">
+          <div class="address-row"><div><label for="host">MAC ADDRESS</label><input id="host" placeholder="192.168.1.24 or Mac-mini.local" required autocomplete="off" spellcheck="false"></div><div><label for="port">PORT</label><input id="port" type="number" value="7878" min="1" max="65535" required></div></div>
+          <label for="pin">HOST PIN</label><input id="pin" type="password" placeholder="PIN from iframe-host" autocomplete="off" maxlength="256">
+          <div class="separator"></div>
+          <div class="settings-row"><div><label for="resolution">DISPLAY</label><select id="resolution"><option value="screen">Match this screen</option><option value="1920x1080">1920 × 1080</option><option value="2560x1440">2560 × 1440</option><option value="3840x2160">3840 × 2160</option></select></div><div><label for="fps">FRAME RATE</label><select id="fps"><option value="30">30 fps</option><option value="60" selected>60 fps</option><option value="120">120 fps</option></select></div></div>
+          <label for="scale">DESKTOP DENSITY</label><select id="scale"><option value="2">Retina · larger text</option><option value="1.5">Balanced · more room</option><option value="1">Native · most room</option><option value="0">Mirror the Mac’s existing display</option></select>
+          <label class="check"><input id="swap" type="checkbox" checked><span>Use Ctrl for Mac Command shortcuts</span></label>
+          <div id="status" role="status" aria-live="polite"></div>
+          <button id="connect" class="primary" type="submit">Connect to Mac <span>↗</span></button>
+          <button id="cancel" type="button" class="quiet" hidden>Cancel connection</button>
+        </form>
+        <p class="card-footer">Run <code>iframe-host</code> on your Mac to get started.</p>
+      </section>
+    </div>
+    <footer class="page-footer"><span>MAC → WINDOWS</span><span>Your workspace, a little closer.</span></footer>
+  </main>
+  <main id="stream-page" hidden>
+    <div class="toolbar"><div class="stream-name"><span class="dot"></span><strong id="host-name">Mac</strong><span id="stream-info"></span></div><div class="toolbar-actions"><button id="send-text">Send text</button><button id="refresh">Refresh</button><button id="stats-toggle" aria-pressed="false">Stats</button><button id="fullscreen">Fullscreen</button><button id="disconnect" class="disconnect">Disconnect</button></div></div>
+    <div id="viewport"><canvas id="video" width="1920" height="1080" tabindex="0" aria-label="Remote Mac desktop. Control Alt R releases keyboard focus. Control Alt F toggles fullscreen. Control Alt Q disconnects."></canvas><div id="waiting">Waiting for the first frame…</div><div id="stats" hidden></div></div>
+    <div class="stream-footer"><span>Ctrl + Alt + F <b>Fullscreen</b> &nbsp; Ctrl + Alt + R <b>Release keyboard</b></span><span id="keyboard-mode">Ctrl → ⌘ Command</span></div>
+  </main>
+  <dialog id="text-dialog"><form method="dialog"><h2>Send text to your Mac</h2><p>Type or paste text here, then send it to the focused field.</p><textarea id="text-content" rows="6" maxlength="16384" aria-label="Text to send"></textarea><div class="dialog-actions"><button value="cancel">Cancel</button><button id="text-submit" class="primary" value="send">Send text</button></div></form></dialog>
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>

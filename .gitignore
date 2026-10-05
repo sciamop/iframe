@@ -11,3 +11,8 @@ iFrame.xcodeproj/
 .swiftpm/
 *.xcuserstate
 xcuserdata/
+
+# Windows client
+Windows/node_modules/
+Windows/dist/
+Windows/test-output/
