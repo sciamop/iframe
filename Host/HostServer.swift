@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 import IOKit.pwr_mgt
 import Network
@@ -111,6 +112,8 @@ final class ClientSession {
     private var focusTimer: DispatchSourceTimer?
     private var lastFocus = FocusWatcher.Focus.none
     private var streamDisplay: CGDirectDisplayID?
+    private var inputCounts: [String: Int] = [:]
+    private var lastInputLog = Date()
 
     init(transport: MessageTransport, server: HostServer, queue: DispatchQueue) {
         self.channel = transport
@@ -161,6 +164,7 @@ final class ClientSession {
         }
         var r = ByteReader(data)
         let input = server.injector
+        countInput(type, data)
         switch type {
         case .mouseMove:
             if let x = r.f32(), let y = r.f32() { input.move(x: x, y: y) }
@@ -216,6 +220,29 @@ final class ClientSession {
         self.hello = hello
         restartStream(display: hello.display)
         startFocusWatcher()
+    }
+
+    /// Periodic summary of input received, so input problems show up in the log.
+    private func countInput(_ type: MsgType, _ data: Data) {
+        let label: String
+        switch type {
+        case .mouseMove: label = "moves"
+        case .mouseButton: label = "clicks"
+        case .scroll: label = "scrolls"
+        case .key: label = "keys"
+        case .text: label = "text"
+        default: return
+        }
+        inputCounts[label, default: 0] += 1
+        if type == .key, data.count >= 3 {
+            inputCounts["last key 0x" + String(Int(data[data.startIndex]) << 8 | Int(data[data.startIndex + 1]), radix: 16)] = 0
+        }
+        guard Date().timeIntervalSince(lastInputLog) > 5 else { return }
+        let summary = inputCounts.sorted { $0.key < $1.key }
+            .map { $0.value > 0 ? "\($0.key) \($0.value)" : $0.key }.joined(separator: ", ")
+        hostLog("input from \(name): \(summary)\(AXIsProcessTrusted() ? "" : " — NOT INJECTED: Accessibility permission missing")")
+        inputCounts = [:]
+        lastInputLog = Date()
     }
 
     private var hello: Hello?
