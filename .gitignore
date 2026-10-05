@@ -12,6 +12,10 @@ iFrame.xcodeproj/
 *.xcuserstate
 xcuserdata/
 
+# Windows client
+Windows/node_modules/
+Windows/dist/
+Windows/test-output/
 # Linux client
 Linux/build/
 LinuxHost/build/

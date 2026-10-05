@@ -1,0 +1,52 @@
+{
+  "name": "iframe-windows",
+  "version": "0.1.0",
+  "description": "Windows client for the iFrame Mac remote desktop host",
+  "author": "iFrame contributors",
+  "license": "MIT",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "test:smoke": "electron . --smoke-test",
+    "dist": "electron-builder --win portable --x64",
+    "pack": "electron-builder --win --dir --x64"
+  },
+  "build": {
+    "appId": "com.sciamop.iframe.windows",
+    "productName": "iFrame",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "ui/**/*",
+      "assets/**/*",
+      "test/smoke.cjs",
+      "test/desktop.h264",
+      "package.json"
+    ],
+    "extraFiles": [
+      {
+        "from": "../LICENSE",
+        "to": "LICENSE-iFrame.txt"
+      }
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "assets/icon.png",
+      "signExecutable": false
+    },
+    "portable": {
+      "artifactName": "iFrame-${version}-Windows-x64.exe"
+    }
+  },
+  "dependencies": {
+    "bonjour-service": "^1.4.4",
+    "koffi": "^2.16.3"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  }
+}
