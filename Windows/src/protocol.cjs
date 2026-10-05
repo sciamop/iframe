@@ -66,7 +66,7 @@ function inputPacket(input) {
 
 function validateOptions(o) {
   if (!o || typeof o.host !== 'string' || !o.host.trim() || o.host.length > 253 || /[\s/\\]/.test(o.host.trim()))
-    throw new Error('Enter a Mac IP address or hostname, without a URL prefix.');
+    throw new Error('Enter the host IP address or hostname, without a URL prefix.');
   if (!Number.isInteger(o.port) || o.port < 1 || o.port > 65535) throw new Error('Port must be between 1 and 65535.');
   if (typeof o.pin !== 'string' || o.pin.length > 256) throw new Error('Invalid PIN.');
   if (![30, 60, 120].includes(o.fps) || ![0, 1, 1.5, 2].includes(o.scale)) throw new Error('Invalid stream settings.');

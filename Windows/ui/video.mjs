@@ -1,7 +1,7 @@
 import { lowDelaySPS } from './sps.mjs';
 export function parseFormat(bytes) {
   const b = new Uint8Array(bytes), view = new DataView(b.buffer, b.byteOffset, b.byteLength);
-  if (b.length < 2 || b[0] !== 0) throw new Error('Only H.264 is supported. Disable forced HEVC on the Mac.');
+  if (b.length < 2 || b[0] !== 0) throw new Error('Only H.264 is supported. Disable forced HEVC on the host.');
   let offset = 2; const sets = [];
   for (let i = 0; i < b[1]; i++) {
     if (offset + 4 > b.length) throw new Error('Truncated video format');

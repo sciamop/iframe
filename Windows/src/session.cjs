@@ -14,7 +14,7 @@ class Session extends EventEmitter {
     const fail = message => { if (this.socket !== socket) return; this.close(); this.emit('state', { phase: 'failed', message }); };
     const parser = new Parser((type, data) => {
       if (this.socket !== socket) return;
-      if (type === T.authFailed) return fail('Wrong PIN or incompatible host protocol. Check the PIN on your Mac.');
+      if (type === T.authFailed) return fail('Wrong PIN or incompatible host protocol. Check the PIN on the host.');
       if (type === T.welcome) {
         const w = JSON.parse(data.toString());
         if (w.codec !== 0) return fail('The host is forcing HEVC. Restart it with H.264 or automatic codec selection.');
@@ -39,12 +39,12 @@ class Session extends EventEmitter {
       }
     });
     socket.setNoDelay(true); socket.setKeepAlive(true, 5000); socket.setTimeout(15000);
-    socket.on('timeout', () => fail('The Mac stopped responding. Check the network and reconnect.'));
+    socket.on('timeout', () => fail('The host stopped responding. Check the network and reconnect.'));
     socket.on('data', chunk => { try { parser.push(chunk); } catch (e) { fail(`Stream error: ${e.message}`); } });
     socket.on('error', e => fail(`Cannot connect to ${o.host}:${o.port} (${e.code ?? e.message}).`));
-    socket.on('close', () => fail('The Mac closed the connection. Check its screen recording permission and host log.'));
+    socket.on('close', () => fail('The host closed the connection. Check the host log (on a Mac, also its screen recording permission).'));
     socket.on('connect', () => {
-      this.send(T.hello, Buffer.from(JSON.stringify({ version: 1, pin: o.pin, name: os.hostname(), supportsHEVC: false,
+      this.send(T.hello, Buffer.from(JSON.stringify({ version: 1, pin: o.pin, name: os.hostname(), os: 'windows', supportsHEVC: false,
         maxFPS: o.fps, display: { width: o.width, height: o.height, uiScale: o.scale } })));
       this.timer = setInterval(() => {
         if (!this.ready) return;

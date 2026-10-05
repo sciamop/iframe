@@ -1,6 +1,6 @@
 # iframe-linux-host
 
-Streams a Linux (X11) desktop to iFrame clients: the iPad app and the Linux client. It's a
+Streams a Linux (X11) desktop to iFrame clients: the iPad app, the Linux client and the Windows client. It's a
 **separate host** from the Mac's `iframe-host` (`Host/`, Swift). They share only the wire protocol,
 so either kind of client connects to either kind of host. The C protocol helpers (framing, JSON,
 key table) come from `Linux/src/`.
@@ -72,10 +72,11 @@ one decision is what ⌘ becomes:
 
 - **iPad (and any client that doesn't say otherwise): ⌘ → Ctrl**, so ⌘C copies, ⌘V pastes and
   ⌘T opens a tab, as a Mac user expects. ⌃ is also Ctrl, so Ctrl+C in a terminal still works.
-- **Linux client: ⌘ → Super.** The Linux client tells the host it's a Linux machine
-  (`"os":"linux"` in its hello), and the host tells the client it's Linux (`"os":"linux"` in its
-  welcome). The client then sends Ctrl, Alt and Super as themselves, so every key lands exactly
-  where it is on your keyboard.
+- **Linux and Windows clients: ⌘ → Super.** These clients say what they are (`"os":"linux"` or
+  `"os":"windows"` in their hello), and the host tells the client it's Linux (`"os":"linux"` in its
+  welcome). The client then sends Ctrl, Alt and Super (the Windows key) as themselves, so every
+  key lands exactly where it is on your keyboard. On Windows the Windows key reaches the host
+  only while the stream is fullscreen; otherwise Windows keeps it for the Start menu.
 
 `--cmd-key ctrl|super` overrides this. Text from the iPad's on-screen keyboard is typed as
 Unicode; characters with no key on the layout are typed through a temporarily remapped spare
