@@ -16,3 +16,5 @@ xcuserdata/
 Windows/node_modules/
 Windows/dist/
 Windows/test-output/
+# Linux client
+Linux/build/
