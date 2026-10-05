@@ -54,7 +54,20 @@ Building it yourself? Change `DEVELOPMENT_TEAM` and the `com.toddfaulls` bundle 
 
 Your Mac appears under **Mac** on the connect screen. Enter the PIN, pick a display density, and tap **Connect**.
 
-### Controls
+## Client (Linux)
+
+`Linux/` has a C client (SDL2 + FFmpeg, NVDEC/VAAPI hardware decoding) that speaks the same
+protocol. The Mac's virtual display takes the shape of the Linux window or monitor.
+
+```sh
+sudo apt install libsdl2-dev libavcodec-dev libavutil-dev avahi-utils
+make -C Linux && make -C Linux install
+iframe-client            # finds the Mac over Bonjour; --help for options
+```
+
+See [Linux/README.md](Linux/README.md) for scaling, key mapping and hotkeys.
+
+### Controls (iPad)
 | Input | Action |
 |---|---|
 | Trackpad / mouse | Pointer, click, right click, two-finger scroll |

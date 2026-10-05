@@ -11,3 +11,6 @@ iFrame.xcodeproj/
 .swiftpm/
 *.xcuserstate
 xcuserdata/
+
+# Linux client
+Linux/build/
