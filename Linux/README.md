@@ -1,8 +1,9 @@
 # iFrame Linux client
 
-A Linux client for iframe-host. It speaks the same protocol as the iPad app, so nothing on the
-Mac changes: the host builds a virtual display shaped like your Linux window or monitor and
-streams it.
+A Linux client for iFrame hosts. It speaks the same protocol as the iPad app, so nothing on the
+host changes. It connects to the Mac's `iframe-host`, which builds a virtual display shaped like
+your Linux window or monitor, and to [`iframe-linux-host`](../LinuxHost/README.md), which streams
+another Linux desktop.
 
 ```
 iframe-host (Mac) ──TCP──► iframe-client (Linux)
@@ -33,8 +34,10 @@ The PIN comes from `--pin`, `$IFRAME_PIN`, or a prompt. After a successful conne
 port, PIN and scale are saved to `~/.config/iframe/linux-client` (mode 600), so a bare
 `iframe-client` reconnects next time. A saved PIN is only ever sent to the host it was saved for.
 
-If the host goes away (it restarts, the Mac sleeps, Wi-Fi drops), the client keeps retrying every
-second. A wrong PIN exits with status 2.
+If the connection fails (the Mac sleeps, Wi-Fi drops), the client keeps retrying every second.
+If the host ends the session cleanly (another device connected, or the host stopped), the
+client waits for a click or key press before reconnecting. Reconnecting straight away would
+take the session back from the iPad that just connected. A wrong PIN exits with status 2.
 
 ### Display size (`--scale`)
 
@@ -65,6 +68,10 @@ modifier then becomes ⌥:
 
 In fullscreen the client grabs the keyboard, so Alt+Tab, Super and friends go to the Mac.
 
+**On a Linux host** (`iframe-linux-host`), every key maps 1:1: Ctrl, Alt and Super arrive as
+themselves. The host says it's Linux in its welcome message, and the client then stops mapping
+Alt to ⌘. Passing `--cmd-key` explicitly keeps your mapping.
+
 **Hotkeys** (always local, never sent): Ctrl+Alt+Shift plus
 
 | key | |
@@ -80,7 +87,10 @@ The window title shows the host, resolution, decoder, fps, bitrate, round trip a
 ### Other options
 
 `--scroll-speed X`, `--invert-scroll`, `--local-cursor` (show the Linux pointer over the stream
-as well; the Mac's cursor is part of the video), `--no-hw`, `--h264`, `--vsync`, `--stats`.
+as well; the host's cursor is part of the video), `--view-only` (watch without sending mouse or
+keyboard), `--no-hw`, `--h264`, `--vsync`, `--stats`.
+
+Colours follow the stream's own YUV matrix: BT.709 from the Mac, BT.601 from NVENC.
 
 ## Testing without a Mac
 

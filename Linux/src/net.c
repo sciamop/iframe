@@ -85,6 +85,7 @@ bool net_read_full(int fd, void *buf, size_t len) {
     while (len) {
         ssize_t n = recv(fd, p, len, 0);
         if (n < 0 && errno == EINTR) continue;
+        if (n == 0) errno = 0;  // the peer closed cleanly; callers tell that apart from errors
         if (n <= 0) return false;
         p += n;
         len -= n;

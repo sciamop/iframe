@@ -8,6 +8,7 @@
 //   timer    once a second: ping + stats
 
 #define _GNU_SOURCE
+#include <errno.h>
 #include <getopt.h>
 #include <limits.h>
 #include <math.h>
@@ -40,11 +41,13 @@ static struct {
     bool hw;
     bool h264_only;
     enum CmdKey cmd_key;
+    bool cmd_key_given;
     double scroll_speed;
     bool invert_scroll;
     bool local_cursor;
     bool vsync;
     bool print_stats;
+    bool view_only;
 } opt = {
     .port = IFRAME_DEFAULT_PORT,
     .scale = 1,
@@ -59,6 +62,11 @@ static struct {
 static Uint32 EV_FRAME, EV_WELCOME, EV_STATUS, EV_STATS, EV_FATAL;
 
 static atomic_bool quitting;
+
+// After the host ends a session cleanly (another device took over, or it stopped), wait for the
+// user instead of reconnecting: reconnecting at once would take the session straight back.
+static atomic_bool waiting_for_user;
+static SDL_sem *reconnect_sem;
 
 // Socket, shared by every thread that sends.
 static SDL_mutex *send_lock;
@@ -85,6 +93,7 @@ static int max_fps = 60;
 // MARK: - Sending
 
 static bool send_msg(uint8_t type, const void *payload, uint32_t len) {
+    if (opt.view_only && type >= MSG_MOUSE_MOVE && type <= MSG_TEXT) return true;
     uint8_t stackbuf[256];
     uint8_t *buf = len + 5 <= sizeof stackbuf ? stackbuf : malloc(len + 5);
     if (!buf) return false;
@@ -141,7 +150,7 @@ static void send_hello(void) {
     json_escape(host, name, sizeof name);
     char json[512];
     int n = snprintf(json, sizeof json,
-                     "{\"version\":%d,\"pin\":\"%s\",\"name\":\"%s\",\"supportsHEVC\":%s,\"maxFPS\":%d,"
+                     "{\"version\":%d,\"pin\":\"%s\",\"name\":\"%s\",\"os\":\"linux\",\"supportsHEVC\":%s,\"maxFPS\":%d,"
                      "\"display\":{\"width\":%d,\"height\":%d,\"uiScale\":%g}}",
                      IFRAME_PROTOCOL_VERSION, pin, name, opt.h264_only ? "false" : "true", max_fps,
                      atomic_load(&request_w), atomic_load(&request_h), opt.scale);
@@ -240,6 +249,9 @@ static void handle_welcome(const uint8_t *p, uint32_t len) {
     if (json_number(j, len, "fps", &v)) w.fps = (int)v;
     json_string(j, len, "hostName", w.host_name, sizeof w.host_name);
     json_bool(j, len, "isVirtual", &w.is_virtual);
+    char os[32] = "";
+    json_string(j, len, "os", os, sizeof os);
+    w.is_linux = strcmp(os, "linux") == 0;
     SDL_LockMutex(state_lock);
     welcome = w;
     have_welcome = true;
@@ -292,11 +304,14 @@ static int network_thread(void *unused) {
         send_hello();
         Decoder *dec = decoder_new(opt.hw);
         uint64_t last_keyframe_request = 0;
-        bool auth_failed = false;
+        bool auth_failed = false, streamed = false, closed_by_host = false;
 
         for (;;) {
             uint8_t header[5];
-            if (!net_read_full(fd, header, 5)) break;
+            if (!net_read_full(fd, header, 5)) {
+                closed_by_host = streamed && errno == 0;
+                break;
+            }
             uint32_t len = get_u32(header + 1);
             if (len > IFRAME_MAX_MESSAGE) break;
             if (len > body_cap) {
@@ -305,11 +320,15 @@ static int network_thread(void *unused) {
                 body = malloc(body_cap);
                 if (!body) { body_cap = 0; break; }
             }
-            if (len && !net_read_full(fd, body, len)) break;
+            if (len && !net_read_full(fd, body, len)) {
+                closed_by_host = streamed && errno == 0;
+                break;
+            }
 
             switch (header[0]) {
             case MSG_WELCOME:
                 ever_connected = true;
+                streamed = true;
                 handle_welcome(body, len);
                 break;
             case MSG_AUTH_FAILED: auth_failed = true; break;
@@ -344,9 +363,18 @@ static int network_thread(void *unused) {
 
         if (atomic_load(&quitting)) break;
         if (auth_failed) {
-            set_status("Wrong PIN. Use the PIN printed by iframe-host (~/.config/iframe/pin on the Mac).");
+            set_status("Wrong PIN. Use the PIN the host printed when it started.");
             push_event(EV_FATAL);
             break;
+        }
+        if (closed_by_host) {
+            set_status("%s ended the session (another device connected, or the host stopped) — click or press a "
+                       "key to reconnect", opt.host);
+            while (SDL_SemTryWait(reconnect_sem) == 0) {}
+            atomic_store(&waiting_for_user, true);
+            while (!atomic_load(&quitting) && SDL_SemWaitTimeout(reconnect_sem, 200) != 0) {}
+            atomic_store(&waiting_for_user, false);
+            continue;
         }
         set_status(ever_connected ? "Disconnected from %s — reconnecting" : "%s closed the connection — retrying",
                    opt.host);
@@ -420,9 +448,11 @@ static SDL_Window *window;
 static SDL_Renderer *renderer;
 static SDL_Texture *texture;
 static int tex_w, tex_h, tex_format;
+static SDL_YUV_CONVERSION_MODE tex_yuv_mode = SDL_YUV_CONVERSION_BT709;
 static AVFrame *shown_frame;
 static bool have_picture;
 static bool keyboard_grab;
+static bool welcome_is_linux;
 
 static bool mac_keys_down[128];
 static uint32_t buttons_down;
@@ -446,6 +476,8 @@ static void normalized(int x, int y, float *nx, float *ny) {
 }
 
 static int remap_usage(int usage) {
+    // A Linux host maps ⌘ back to Super, so every key lands where it is on this keyboard.
+    if (!opt.cmd_key_given && welcome_is_linux) return usage;
     // HID: 0xE0 lctrl, 0xE2 lalt, 0xE3 lgui; 0xE4 rctrl, 0xE6 ralt, 0xE7 rgui. The table maps
     // gui -> command and alt -> option, so remapping is a swap.
     int left = opt.cmd_key == CMD_ALT ? 0xE2 : opt.cmd_key == CMD_CTRL ? 0xE0 : 0xE3;
@@ -577,7 +609,15 @@ static void show_pending_frame(void) {
         return;
     }
     }
-    if (!texture || tex_w != f->width || tex_h != f->height || tex_format != format) {
+    // Follow the stream's matrix: the Mac host sends BT.709; NVENC (iframe-linux-host) converts
+    // RGB with BT.601 and says so. SDL applies the mode when a texture is created.
+    SDL_YUV_CONVERSION_MODE yuv_mode =
+        f->color_range == AVCOL_RANGE_JPEG ? SDL_YUV_CONVERSION_JPEG
+        : f->colorspace == AVCOL_SPC_BT470BG || f->colorspace == AVCOL_SPC_SMPTE170M ? SDL_YUV_CONVERSION_BT601
+        : SDL_YUV_CONVERSION_BT709;
+    if (!texture || tex_w != f->width || tex_h != f->height || tex_format != format || tex_yuv_mode != yuv_mode) {
+        SDL_SetYUVConversionMode(yuv_mode);
+        tex_yuv_mode = yuv_mode;
         if (texture) SDL_DestroyTexture(texture);
         texture = SDL_CreateTexture(renderer, format, SDL_TEXTUREACCESS_STREAMING, f->width, f->height);
         if (!texture) {
@@ -636,7 +676,8 @@ static void usage(FILE *f) {
             "  -s, --scale S          pixels per Mac point for the virtual display: 1 = most space (default),\n"
             "                         2 = Retina-sharp, 1.33 / 1.6 in between, 0 = stream the Mac's own display\n"
             "  -w, --window WxH       start in a window (default: fullscreen); the Mac display follows its size\n"
-            "      --cmd-key KEY      which key is ⌘: alt (default), super, or ctrl\n"
+            "      --cmd-key KEY      which key is ⌘ on a Mac: alt (default), super, or ctrl\n"
+            "                         (on a Linux host every key maps 1:1 unless this is given)\n"
             "      --scroll-speed X   wheel multiplier (default 1)\n"
             "      --invert-scroll    reverse wheel direction\n"
             "      --local-cursor     show the Linux cursor over the stream too\n"
@@ -644,6 +685,7 @@ static void usage(FILE *f) {
             "      --h264             ask for H.264 instead of HEVC\n"
             "      --vsync            sync presentation to the monitor (smoother, adds latency)\n"
             "      --stats            print per-second stats\n"
+            "      --view-only        watch without sending mouse or keyboard\n"
             "  -l, --list             list Macs on the LAN and exit\n"
             "\n"
             "Hotkeys (Ctrl+Alt+Shift + key): F fullscreen, G keyboard grab, S stats, K keyframe, Q quit.\n");
@@ -685,7 +727,7 @@ int main(int argc, char **argv) {
     snprintf(saved_host, sizeof saved_host, "%s", opt.host);
     bool list_only = false;
 
-    enum { O_CMD = 1000, O_SCROLL, O_INVERT, O_CURSOR, O_NOHW, O_H264, O_VSYNC, O_STATS };
+    enum { O_CMD = 1000, O_SCROLL, O_INVERT, O_CURSOR, O_NOHW, O_H264, O_VSYNC, O_STATS, O_VIEW };
     static const struct option longopts[] = {
         {"pin", required_argument, 0, 'p'},     {"scale", required_argument, 0, 's'},
         {"window", required_argument, 0, 'w'},  {"list", no_argument, 0, 'l'},
@@ -693,7 +735,8 @@ int main(int argc, char **argv) {
         {"scroll-speed", required_argument, 0, O_SCROLL}, {"invert-scroll", no_argument, 0, O_INVERT},
         {"local-cursor", no_argument, 0, O_CURSOR}, {"no-hw", no_argument, 0, O_NOHW},
         {"h264", no_argument, 0, O_H264},       {"vsync", no_argument, 0, O_VSYNC},
-        {"stats", no_argument, 0, O_STATS},     {0, 0, 0, 0},
+        {"stats", no_argument, 0, O_STATS},     {"view-only", no_argument, 0, O_VIEW},
+        {0, 0, 0, 0},
     };
     bool pin_given = false, scale_given = false;
     for (int c; (c = getopt_long(argc, argv, "p:s:w:lh", longopts, NULL)) != -1;) {
@@ -711,6 +754,7 @@ int main(int argc, char **argv) {
             else if (!strcmp(optarg, "super")) opt.cmd_key = CMD_SUPER;
             else if (!strcmp(optarg, "ctrl")) opt.cmd_key = CMD_CTRL;
             else { usage(stderr); return 64; }
+            opt.cmd_key_given = true;
             break;
         case O_SCROLL: opt.scroll_speed = atof(optarg); break;
         case O_INVERT: opt.invert_scroll = true; break;
@@ -719,6 +763,7 @@ int main(int argc, char **argv) {
         case O_H264: opt.h264_only = true; break;
         case O_VSYNC: opt.vsync = true; break;
         case O_STATS: opt.print_stats = true; break;
+        case O_VIEW: opt.view_only = true; break;
         default: usage(stderr); return 64;
         }
     }
@@ -805,6 +850,7 @@ int main(int argc, char **argv) {
     send_lock = SDL_CreateMutex();
     frame_lock = SDL_CreateMutex();
     state_lock = SDL_CreateMutex();
+    reconnect_sem = SDL_CreateSemaphore(0);
     pending_frame = av_frame_alloc();
     shown_frame = av_frame_alloc();
 
@@ -825,6 +871,7 @@ int main(int argc, char **argv) {
             } else if (e.type == EV_WELCOME) {
                 SDL_LockMutex(state_lock);
                 bool connected = have_welcome;
+                welcome_is_linux = welcome.is_linux;
                 SDL_UnlockMutex(state_lock);
                 if (connected && !saved) {
                     save_config();
@@ -850,6 +897,9 @@ int main(int argc, char **argv) {
                 case SDL_WINDOWEVENT_FOCUS_LOST: release_all(); break;
                 case SDL_WINDOWEVENT_FOCUS_GAINED: if (keyboard_grab) set_keyboard_grab(true); break;
                 }
+            } else if ((e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN) && atomic_load(&waiting_for_user)) {
+                atomic_store(&waiting_for_user, false);
+                SDL_SemPost(reconnect_sem);
             } else if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
                 handle_key(&e.key);
             } else if (e.type == SDL_MOUSEMOTION) {

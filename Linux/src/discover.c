@@ -39,6 +39,11 @@ int discover_hosts(HostEntry *out, int max, int timeout_seconds) {
         for (char *p = line, *tok; nf < 10 && (tok = strsep(&p, ";")); ) fields[nf++] = tok;
         if (nf < 9) continue;
         bool ipv4 = strcmp(fields[2], "IPv4") == 0;
+        // Containers and VMs bridges show up too when the host is this machine; skip them.
+        const char *iface = fields[1];
+        if (!strncmp(iface, "docker", 6) || !strncmp(iface, "br-", 3) || !strncmp(iface, "virbr", 5) ||
+            !strncmp(iface, "veth", 4))
+            continue;
         char name[128];
         unescape(fields[3], name, sizeof name);
         int i;

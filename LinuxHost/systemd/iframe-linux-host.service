@@ -1,0 +1,17 @@
+# iframe-linux-host as a systemd user service. Installed by LinuxHost/install.sh.
+# Distinct from the Mac's iframe-host (a LaunchAgent): separate binary, unit and PIN file.
+[Unit]
+Description=iFrame Linux host (stream this X11 desktop to iFrame clients)
+After=graphical-session.target network-online.target
+
+[Service]
+# The X session to stream. It needs the session's X authority; ~/.Xauthority is the default.
+Environment=DISPLAY=:0
+ExecStart=%h/.local/bin/iframe-linux-host
+# Until the X session is up (e.g. at boot, before login) the host exits; keep retrying.
+Restart=always
+RestartSec=3
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target

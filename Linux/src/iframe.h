@@ -53,6 +53,7 @@ typedef struct {
     int codec, fps;
     char host_name[128];
     bool is_virtual;
+    bool is_linux;      // "os":"linux" — iframe-linux-host, not the Mac's iframe-host
 } Welcome;
 
 typedef struct {

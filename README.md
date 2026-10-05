@@ -67,6 +67,18 @@ iframe-client            # finds the Mac over Bonjour; --help for options
 
 See [Linux/README.md](Linux/README.md) for scaling, key mapping and hotkeys.
 
+## Host (Linux)
+
+`LinuxHost/` is a separate host for Linux desktops (X11 + NVENC), in C. It's independent of the
+Mac host above: its own binary (`iframe-linux-host`), systemd user unit and PIN file. Only the
+wire protocol is shared, so the iPad app and the Linux client connect to it unchanged.
+
+```sh
+LinuxHost/install.sh     # build, install, enable iframe-linux-host.service; prints the PIN
+```
+
+See [LinuxHost/README.md](LinuxHost/README.md).
+
 ### Controls (iPad)
 | Input | Action |
 |---|---|
