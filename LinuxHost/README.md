@@ -41,9 +41,8 @@ This builds and installs `~/.local/bin/iframe-linux-host`, creates a PIN in
 the current `$DISPLAY`.
 
 ```sh
-journalctl --user -u iframe-linux-host -f            # logs
-systemctl --user restart iframe-linux-host
-systemctl --user disable --now iframe-linux-host     # turn it off
+iframe-linux start | stop | restart | status | logs | pin
+systemctl --user disable --now iframe-linux-host     # stop starting it at login
 ```
 
 Or run it by hand: `make -C LinuxHost && LinuxHost/build/iframe-linux-host --pin 123456`.

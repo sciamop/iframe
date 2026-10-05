@@ -1,0 +1,21 @@
+#!/bin/bash
+# Controls iframe-linux-host (the systemd user service installed by LinuxHost/install.sh).
+#   iframe-linux start | stop | restart | status | logs | pin
+set -euo pipefail
+
+UNIT=iframe-linux-host.service
+PIN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/iframe/linux-host-pin"
+
+case "${1:-status}" in
+    start | stop | restart)
+        systemctl --user "$1" "$UNIT"
+        echo "iframe-linux-host: $(systemctl --user is-active "$UNIT")"
+        ;;
+    status) systemctl --user status "$UNIT" --no-pager ;;
+    logs) journalctl --user -u "$UNIT" -f ;;
+    pin) cat "$PIN_FILE" ;;
+    *)
+        echo "usage: iframe-linux {start|stop|restart|status|logs|pin}" >&2
+        exit 64
+        ;;
+esac

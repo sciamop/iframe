@@ -11,7 +11,8 @@ PIN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/iframe/linux-host-pin"
 echo "==> building"
 make -C "$ROOT" >/dev/null
 make -C "$ROOT" install >/dev/null
-echo "    installed ~/.local/bin/iframe-linux-host"
+install -Dm755 "$ROOT/iframe-linux" "$HOME/.local/bin/iframe-linux"
+echo "    installed ~/.local/bin/iframe-linux-host and iframe-linux (start/stop/restart/status/logs/pin)"
 
 if [ ! -s "$PIN_FILE" ]; then
     mkdir -p "$(dirname "$PIN_FILE")"
@@ -31,8 +32,8 @@ cat <<MSG
 
   iframe-linux-host is running and starts with your session.
   PIN:  $(cat "$PIN_FILE")
-  Logs: journalctl --user -u iframe-linux-host -f
-  Stop: systemctl --user disable --now iframe-linux-host
+  Control: iframe-linux start | stop | restart | status | logs | pin
+  Disable at login: systemctl --user disable --now iframe-linux-host
 
   It listens on port 7878 on every interface (LAN included), protected only by the PIN.
 MSG
