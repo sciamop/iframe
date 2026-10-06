@@ -59,7 +59,7 @@ static struct {
     .scroll_speed = 1,
 };
 
-static Uint32 EV_FRAME, EV_WELCOME, EV_STATUS, EV_STATS, EV_FATAL;
+static Uint32 EV_FRAME, EV_WELCOME, EV_STATUS, EV_STATS, EV_FATAL, EV_CURSOR;
 
 static atomic_bool quitting;
 
@@ -89,6 +89,15 @@ static char status_text[256];
 static char decoder_name[96];
 static atomic_int request_w, request_h;   // display size to ask for (drawable pixels)
 static int max_fps = 60;
+
+// The Mac's current cursor shape (under state_lock). Hosts that send it capture without the
+// cursor, so we draw it as the system pointer here: it then moves with no network delay.
+static struct {
+    uint8_t *rgba;            // PNG decoded, at 2x Mac points; NULL until the host sends one
+    int px_w, px_h;
+    int hot_x, hot_y;         // Mac points
+    int pt_w, pt_h;
+} mac_cursor;
 
 // MARK: - Sending
 
@@ -148,10 +157,11 @@ static void send_hello(void) {
     gethostname(host, sizeof host - 1);
     json_escape(opt.pin, pin, sizeof pin);
     json_escape(host, name, sizeof name);
-    char json[512];
+    char json[640];
+    // localCursor: the host sends cursor shapes and leaves the pointer out of the video.
     int n = snprintf(json, sizeof json,
                      "{\"version\":%d,\"pin\":\"%s\",\"name\":\"%s\",\"os\":\"linux\",\"supportsHEVC\":%s,\"maxFPS\":%d,"
-                     "\"display\":{\"width\":%d,\"height\":%d,\"uiScale\":%g}}",
+                     "\"localCursor\":true,\"display\":{\"width\":%d,\"height\":%d,\"uiScale\":%g}}",
                      IFRAME_PROTOCOL_VERSION, pin, name, opt.h264_only ? "false" : "true", max_fps,
                      atomic_load(&request_w), atomic_load(&request_h), opt.scale);
     send_msg(MSG_HELLO, json, n);
@@ -262,6 +272,24 @@ static void handle_welcome(const uint8_t *p, uint32_t len) {
     push_event(EV_WELCOME);
 }
 
+static void handle_cursor(const uint8_t *p, uint32_t len) {
+    if (len <= 8) return;
+    uint8_t *rgba;
+    int w, h;
+    if (!cursor_decode_png(p + 8, len - 8, &rgba, &w, &h)) return;
+    SDL_LockMutex(state_lock);
+    free(mac_cursor.rgba);
+    mac_cursor.rgba = rgba;
+    mac_cursor.px_w = w;
+    mac_cursor.px_h = h;
+    mac_cursor.hot_x = p[0] << 8 | p[1];
+    mac_cursor.hot_y = p[2] << 8 | p[3];
+    mac_cursor.pt_w = p[4] << 8 | p[5];
+    mac_cursor.pt_h = p[6] << 8 | p[7];
+    SDL_UnlockMutex(state_lock);
+    push_event(EV_CURSOR);
+}
+
 static void handle_stats(const uint8_t *p, uint32_t len) {
     const char *j = (const char *)p;
     HostStats s = {0};
@@ -335,6 +363,7 @@ static int network_thread(void *unused) {
             case MSG_FORMAT: handle_format(dec, body, len); break;
             case MSG_FRAME: handle_frame(dec, body, len, &last_keyframe_request); break;
             case MSG_STATS: handle_stats(body, len); break;
+            case MSG_CURSOR: handle_cursor(body, len); break;
             case MSG_PONG:
                 if (len >= 8) {
                     SDL_LockMutex(state_lock);
@@ -354,6 +383,8 @@ static int network_thread(void *unused) {
         decoder_free(dec);
         SDL_LockMutex(state_lock);
         have_welcome = false;
+        free(mac_cursor.rgba);   // the next host may draw the cursor into the video itself
+        mac_cursor.rgba = NULL;
         SDL_UnlockMutex(state_lock);
         SDL_LockMutex(frame_lock);
         av_frame_unref(pending_frame);
@@ -585,6 +616,76 @@ static void render(void) {
     SDL_RenderPresent(renderer);
 }
 
+// MARK: - Cursor
+
+static SDL_Cursor *shown_cursor;
+
+/// Shows the Mac's cursor shape as our own pointer, sized to how big the Mac's screen appears
+/// in the window. Without a shape from the host (older host, Linux host, or not connected) the
+/// pointer stays hidden, because the cursor is in the video.
+static void apply_cursor(void) {
+    SDL_LockMutex(state_lock);
+    double point_w = have_welcome && welcome.width > 0 ? welcome.point_width : 0;
+    int stream_w = welcome.width, stream_h = welcome.height;
+    SDL_Surface *src = NULL;
+    int hot_x = 0, hot_y = 0, pt_w = 0, pt_h = 0;
+    if (mac_cursor.rgba && point_w > 0 && stream_h > 0) {
+        src = SDL_CreateRGBSurfaceWithFormat(0, mac_cursor.px_w, mac_cursor.px_h, 32, SDL_PIXELFORMAT_RGBA32);
+        if (src) {
+            for (int y = 0; y < src->h; y++)
+                memcpy((uint8_t *)src->pixels + (size_t)y * src->pitch, mac_cursor.rgba + (size_t)y * src->w * 4,
+                       (size_t)src->w * 4);
+        }
+        hot_x = mac_cursor.hot_x;
+        hot_y = mac_cursor.hot_y;
+        pt_w = mac_cursor.pt_w;
+        pt_h = mac_cursor.pt_h;
+    }
+    SDL_UnlockMutex(state_lock);
+
+    if (!src) {
+        if (shown_cursor) {
+            SDL_SetCursor(SDL_GetDefaultCursor());
+            SDL_FreeCursor(shown_cursor);
+            shown_cursor = NULL;
+        }
+        SDL_ShowCursor(opt.local_cursor ? SDL_ENABLE : SDL_DISABLE);
+        return;
+    }
+
+    // X11 cursors are in device pixels; Wayland scales cursor surfaces like window content.
+    int w, h;
+    const char *driver = SDL_GetCurrentVideoDriver();
+    if (driver && !strcmp(driver, "wayland")) SDL_GetWindowSize(window, &w, &h);
+    else SDL_GetRendererOutputSize(renderer, &w, &h);
+    float fit = fminf((float)w / stream_w, (float)h / stream_h);
+    float scale = stream_w * fit / (float)point_w;   // cursor pixels per Mac point
+    int cw = (int)lroundf(fminf(pt_w * scale, 256)), ch = (int)lroundf(fminf(pt_h * scale, 256));
+    if (cw < 1) cw = 1;
+    if (ch < 1) ch = 1;
+
+    SDL_Surface *scaled = SDL_CreateRGBSurfaceWithFormat(0, cw, ch, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Cursor *cursor = NULL;
+    if (scaled) {
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+        if (SDL_SoftStretchLinear(src, NULL, scaled, NULL) != 0)
+#endif
+        {
+            SDL_SetSurfaceBlendMode(src, SDL_BLENDMODE_NONE);
+            SDL_BlitScaled(src, NULL, scaled, NULL);
+        }
+        int hx = (int)lroundf(hot_x * scale), hy = (int)lroundf(hot_y * scale);
+        cursor = SDL_CreateColorCursor(scaled, hx < cw ? hx : cw - 1, hy < ch ? hy : ch - 1);
+        SDL_FreeSurface(scaled);
+    }
+    SDL_FreeSurface(src);
+    if (!cursor) return;
+    SDL_SetCursor(cursor);
+    if (shown_cursor) SDL_FreeCursor(shown_cursor);
+    shown_cursor = cursor;
+    SDL_ShowCursor(SDL_ENABLE);
+}
+
 static void show_pending_frame(void) {
     SDL_LockMutex(frame_lock);
     bool got = frame_pending;
@@ -680,7 +781,8 @@ static void usage(FILE *f) {
             "                         (on a Linux host every key maps 1:1 unless this is given)\n"
             "      --scroll-speed X   wheel multiplier (default 1)\n"
             "      --invert-scroll    reverse wheel direction\n"
-            "      --local-cursor     show the Linux cursor over the stream too\n"
+            "      --local-cursor     show the Linux pointer even when the host draws the cursor into the\n"
+            "                         video (Macs send their cursor shape and don't need this)\n"
             "      --no-hw            software decoding only\n"
             "      --h264             ask for H.264 instead of HEVC\n"
             "      --vsync            sync presentation to the monitor (smoother, adds latency)\n"
@@ -815,12 +917,13 @@ int main(int argc, char **argv) {
         return 1;
     }
     SDL_SetYUVConversionMode(SDL_YUV_CONVERSION_BT709);
-    Uint32 base = SDL_RegisterEvents(5);
+    Uint32 base = SDL_RegisterEvents(6);
     EV_FRAME = base;
     EV_WELCOME = base + 1;
     EV_STATUS = base + 2;
     EV_STATS = base + 3;
     EV_FATAL = base + 4;
+    EV_CURSOR = base + 5;
 
     Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
     if (opt.fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
@@ -882,6 +985,9 @@ int main(int argc, char **argv) {
                     av_frame_unref(shown_frame);
                     render();
                 }
+                apply_cursor();
+            } else if (e.type == EV_CURSOR) {
+                apply_cursor();
                 update_title(false);
             } else if (e.type == EV_STATUS) {
                 update_title(false);
@@ -892,7 +998,7 @@ int main(int argc, char **argv) {
                 running = false;
             } else if (e.type == SDL_WINDOWEVENT) {
                 switch (e.window.event) {
-                case SDL_WINDOWEVENT_SIZE_CHANGED: resize_at = SDL_GetTicks(); render(); break;
+                case SDL_WINDOWEVENT_SIZE_CHANGED: resize_at = SDL_GetTicks(); render(); apply_cursor(); break;
                 case SDL_WINDOWEVENT_EXPOSED: render(); break;
                 case SDL_WINDOWEVENT_FOCUS_LOST: release_all(); break;
                 case SDL_WINDOWEVENT_FOCUS_GAINED: if (keyboard_grab) set_keyboard_grab(true); break;
@@ -946,6 +1052,7 @@ int main(int argc, char **argv) {
     av_frame_free(&pending_frame);
     av_frame_free(&shown_frame);
     if (texture) SDL_DestroyTexture(texture);
+    if (shown_cursor) SDL_FreeCursor(shown_cursor);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

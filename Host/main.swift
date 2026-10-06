@@ -28,7 +28,7 @@ HOST OPTIONS
   --pin <digits>    fixed PIN (default: random each launch)
 
 PROBE OPTIONS
-  --pin <digits>  --port <n>  --seconds <n>  --screen <w>x<h>[@scale]
+  --pin <digits>  --port <n>  --seconds <n>  --screen <w>x<h>[@scale]  --h264  --local-cursor
 """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
@@ -98,7 +98,10 @@ signalSource.setEventHandler {
 }
 signalSource.resume()
 
-dispatchMain()
+// A real run loop, not dispatchMain(): CoreGraphics delivers display reconfiguration
+// notifications through the main run loop. Without it, this process never sees a virtual
+// display change shape after its first mode, and capture targets a stale display.
+RunLoop.main.run()
 
 func localIPv4Addresses() -> [String] {
     var result: [String] = []

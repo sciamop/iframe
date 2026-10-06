@@ -1,6 +1,6 @@
 #!/bin/bash
 # Regenerates every icon from scripts/make-icon.py: iPad app icon set (light/dark/tinted)
-# and the macOS iFrame.icns for iFrame Host. Needs rsvg-convert and ImageMagick (brew).
+# the macOS iFrame.icns for iFrame Host, and the Mac client's icon set. Needs rsvg-convert and ImageMagick (brew).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -44,4 +44,19 @@ for sz in 16 32 128 256 512; do
   magick Design/icon-mac-1024.png -resize $((sz*2))x$((sz*2)) "$TMP/iFrame.iconset/icon_${sz}x${sz}@2x.png"
 done
 iconutil -c icns "$TMP/iFrame.iconset" -o Design/iFrame.icns
+
+# Mac client: same tile as an asset catalog icon set, plus the logo and accent color.
+MACSET=MacClient/Assets.xcassets/AppIcon.appiconset; mkdir -p "$MACSET"
+cp "$TMP"/iFrame.iconset/*.png "$MACSET/"
+python3 - "$MACSET" <<'PY'
+import json, sys
+images = []
+for sz in (16, 32, 128, 256, 512):
+    for scale in (1, 2):
+        name = f"icon_{sz}x{sz}{'@2x' if scale == 2 else ''}.png"
+        images.append({"filename": name, "idiom": "mac", "scale": f"{scale}x", "size": f"{sz}x{sz}"})
+json.dump({"images": images, "info": {"author": "xcode", "version": 1}}, open(sys.argv[1] + "/Contents.json", "w"), indent=2)
+PY
+rm -rf MacClient/Assets.xcassets/IFrameMark.imageset MacClient/Assets.xcassets/AccentColor.colorset
+cp -R "$MARK" "$COLOR" MacClient/Assets.xcassets/
 echo "icons rebuilt"

@@ -1,15 +1,16 @@
 import Network
 import SwiftUI
 
-// Visual language shared with Pinry Saver: one centered column (max 480 pt) on the system
-// background, a big mark up top, labeled rounded fields, and a single pill-shaped action.
+// The iPad connect screen, adapted for a Mac window: one centered column, the mark up top,
+// labeled rounded fields, and a single pill-shaped action.
 
-struct ConnectView: View {
+struct MacConnectView: View {
     @EnvironmentObject private var session: StreamSession
+    @EnvironmentObject private var window: MainWindow
     @StateObject private var browser = HostBrowser()
     @AppStorage("pin") private var pin = ""
     @AppStorage("manualHost") private var manualHost = ""
-    @AppStorage("uiScale") private var uiScale = 2.0
+    @AppStorage("macDensity") private var density = MacDensity.match.rawValue
     @AppStorage("lastHostName") private var lastHostName = ""
     @AppStorage("savedHosts") private var savedHostsJSON = "[]"
     @State private var pendingSave: SavedHost?
@@ -41,30 +42,34 @@ struct ConnectView: View {
 
     var body: some View {
         ZStack {
-            Color(uiColor: .systemBackground).ignoresSafeArea()
+            Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
 
             ScrollView {
-                HStack {
-                    Spacer()
-                    VStack(alignment: .leading, spacing: 0) {
-                        header
-                        fields
-                        connectButton
-                        Spacer(minLength: 20)
-                        footer
-                    }
-                    .frame(maxWidth: 480)
-                    .padding(.horizontal, 32)
-                    Spacer()
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                    fields
+                    connectButton
+                    footer
                 }
+                .frame(maxWidth: 440)
+                .padding(.horizontal, 32)
+                .frame(maxWidth: .infinity)
             }
-            .scrollDismissesKeyboard(.interactively)
 
             if session.phase == .connecting {
                 connectingCard
             }
         }
-        .onAppear { browser.start() }
+        .frame(minWidth: 420, minHeight: 520)
+        .onAppear {
+            browser.start()
+            // `open iFrame.app --args -manualHost <addr> -pin <pin> -autoConnect YES` connects at launch
+            // (launch arguments override the saved settings for that run).
+            if UserDefaults.standard.bool(forKey: "autoConnect"), session.phase == .idle {
+                UserDefaults.standard.removeObject(forKey: "autoConnect")
+                DispatchQueue.main.async(execute: connect)
+            }
+        }
         .onDisappear { browser.stop() }
         .onChange(of: browser.hosts) { _, hosts in
             // Preselect the Mac used last time, or the only one around.
@@ -92,38 +97,38 @@ struct ConnectView: View {
     // MARK: Sections
 
     private var header: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             Image("IFrameMark")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: min(480, UIScreen.main.bounds.width - 64) * 0.36)
+                .frame(width: 112)
             Text("iFrame")
-                .font(.system(size: 34, weight: .bold))
-            Text("Your Mac, on this iPad. Run iframe-host on the Mac to get started.")
+                .font(.system(size: 30, weight: .bold))
+            Text("Another Mac, in a window. Run iframe-host on it to get started.")
                 .font(.system(size: 11))
-                .foregroundColor(Color(uiColor: .tertiaryLabel))
+                .foregroundColor(Color(nsColor: .tertiaryLabelColor))
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 56)
-        .padding(.bottom, 32)
+        .padding(.top, 36)
+        .padding(.bottom, 28)
     }
 
     private var fields: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 8) {
                 FieldLabel("Mac:")
                 if browser.hosts.isEmpty && savedHosts.isEmpty {
                     HStack(spacing: 10) {
-                        ProgressView()
+                        ProgressView().controlSize(.small)
                         Text("Looking for Macs running iframe-host…")
-                            .foregroundColor(Color(uiColor: .secondaryLabel))
+                            .foregroundColor(Color(nsColor: .secondaryLabelColor))
                     }
-                    .font(.system(size: 15))
+                    .font(.system(size: 13))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frameFieldBackground()
                 } else {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 6) {
                         ForEach(browser.hosts) { host in
                             HostRow(name: host.name,
                                     selected: host.id == selectedHostID && trimmedAddress.isEmpty) {
@@ -148,44 +153,35 @@ struct ConnectView: View {
                 }
             }
 
-            FrameInputField(label: "PIN:", placeholder: "Shown by iframe-host", text: $pin,
-                            keyboardType: .numberPad, monospaced: true)
+            FrameInputField(label: "PIN:", placeholder: "Shown by iframe-host", text: $pin, monospaced: true)
+                .onSubmit(connect)
 
             VStack(alignment: .leading, spacing: 8) {
                 FieldLabel("Mac display:")
                 Menu {
-                    Picker("Mac display", selection: $uiScale) {
-                        Text("Match iPad · sharpest").tag(2.0)
-                        Text("More space").tag(1.6)
-                        Text("Most space").tag(1.33)
-                        Text("Use the Mac's own display").tag(0.0)
+                    Picker("Mac display", selection: $density) {
+                        ForEach(MacDensity.allCases) { choice in
+                            Text(choice.label).tag(choice.rawValue)
+                        }
                     }
+                    .pickerStyle(.inline)
                 } label: {
-                    HStack {
-                        Text(displayLabel)
-                            .foregroundColor(.primary)
-                        Spacer()
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(Color(uiColor: .secondaryLabel))
-                    }
-                    .font(.system(size: 15))
-                    .frameFieldBackground()
+                    Text(MacDensity(rawValue: density)?.label ?? MacDensity.match.label)
+                        .font(.system(size: 13))
                 }
+                .menuStyle(.borderlessButton)
+                .frameFieldBackground()
+                Text(density > 0
+                     ? "The Mac gets a virtual display shaped like this window. Resize or go full screen and it follows."
+                     : "Shows the Mac's own screen, scaled to fit this window.")
+                    .font(.system(size: 11))
+                    .foregroundColor(Color(nsColor: .tertiaryLabelColor))
             }
 
             FrameInputField(label: "Or connect by address (optional):",
                             placeholder: "192.168.1.20, mac-mini.local, Tailscale name",
-                            text: $manualHost, keyboardType: .URL)
-        }
-    }
-
-    private var displayLabel: String {
-        switch uiScale {
-        case 2.0: return "Match iPad · sharpest"
-        case 1.6: return "More space"
-        case 1.33: return "Most space"
-        default: return "Use the Mac's own display"
+                            text: $manualHost)
+                .onSubmit(connect)
         }
     }
 
@@ -193,23 +189,27 @@ struct ConnectView: View {
         Button(action: connect) {
             Text(targetName.map { "Connect to \($0)" } ?? "Connect")
                 .lineLimit(1)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(canConnect ? .iframeInk : Color(uiColor: .secondaryLabel))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(canConnect ? .iframeInk : Color(nsColor: .secondaryLabelColor))
                 .frame(maxWidth: .infinity)
-                .frame(height: 56)
+                .frame(height: 44)
                 .background(canConnect ? Color.iframeTeal : Color.gray.opacity(0.3))
-                .cornerRadius(28)
+                .cornerRadius(22)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.defaultAction)
         .disabled(!canConnect)
-        .padding(.top, 32)
+        .padding(.top, 28)
     }
 
     private var footer: some View {
         VStack(spacing: 0) {
-            Divider().padding(.top, 20)
-            Text("Default port \(String(IFrame.defaultPort)). Use host:port to override.")
-                .font(.system(size: 13))
-                .foregroundColor(Color(uiColor: .tertiaryLabel))
+            Divider().padding(.top, 24)
+            Text("Default port \(String(IFrame.defaultPort)). Use host:port to override. While streaming, ⌃⌥⌘D disconnects and ⌃⌥⌘F toggles full screen; every other shortcut goes to the remote Mac.")
+                .font(.system(size: 11))
+                .foregroundColor(Color(nsColor: .tertiaryLabelColor))
+                .multilineTextAlignment(.center)
                 .padding(.top, 12)
                 .padding(.bottom, 20)
         }
@@ -218,19 +218,17 @@ struct ConnectView: View {
 
     private var connectingCard: some View {
         ZStack {
-            Color.black.opacity(0.5).ignoresSafeArea()
-            VStack(spacing: 24) {
-                IFrameLoadingView(size: 80)
+            Color.black.opacity(0.4).ignoresSafeArea()
+            VStack(spacing: 20) {
+                IFrameLoadingView(size: 64)
                 Text("Connecting to \(session.hostLabel)…")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(.primary)
+                    .font(.system(size: 15, weight: .semibold))
                 Button("Cancel") { session.disconnect() }
-                    .font(.system(size: 15))
-                    .foregroundColor(Color(uiColor: .secondaryLabel))
+                    .keyboardShortcut(.cancelAction)
             }
-            .padding(40)
-            .background(Color(uiColor: .systemBackground))
-            .cornerRadius(20)
+            .padding(32)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .cornerRadius(16)
             .shadow(radius: 20)
         }
         .transition(.opacity)
@@ -240,13 +238,14 @@ struct ConnectView: View {
 
     private func connect() {
         guard canConnect else { return }
+        let choice = MacDensity(rawValue: density) ?? .match
         if !trimmedAddress.isEmpty {
             guard let (endpoint, host) = SavedHost.endpoint(for: trimmedAddress) else { return }
             pendingSave = SavedHost(address: trimmedAddress, pin: pin)
-            session.connect(to: endpoint, pin: pin, label: host, uiScale: uiScale)
+            session.connect(to: endpoint, pin: pin, label: host, window: window, density: choice)
         } else if let host = selectedHost {
             lastHostName = host.name
-            session.connect(to: host.endpoint, pin: pin, label: host.name, uiScale: uiScale)
+            session.connect(to: host.endpoint, pin: pin, label: host.name, window: window, density: choice)
         }
     }
 }
@@ -259,8 +258,8 @@ private struct FieldLabel: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 15, weight: .regular))
-            .foregroundColor(Color(uiColor: .secondaryLabel))
+            .font(.system(size: 13))
+            .foregroundColor(Color(nsColor: .secondaryLabelColor))
     }
 }
 
@@ -268,17 +267,15 @@ private struct FrameInputField: View {
     let label: String
     let placeholder: String
     @Binding var text: String
-    var keyboardType: UIKeyboardType = .default
     var monospaced = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             FieldLabel(label)
             TextField(placeholder, text: $text)
-                .keyboardType(keyboardType)
-                .textInputAutocapitalization(.never)
+                .textFieldStyle(.plain)
                 .autocorrectionDisabled()
-                .font(monospaced ? .system(size: 15).monospacedDigit() : .system(size: 15))
+                .font(monospaced ? .system(size: 13).monospacedDigit() : .system(size: 13))
                 .frameFieldBackground()
         }
     }
@@ -292,34 +289,36 @@ private struct HostRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Image(systemName: symbol)
-                    .font(.system(size: 17))
-                    .foregroundColor(selected ? .iframeTeal : Color(uiColor: .secondaryLabel))
-                Text(name)
                     .font(.system(size: 15))
+                    .foregroundColor(selected ? .iframeTeal : Color(nsColor: .secondaryLabelColor))
+                Text(name)
+                    .font(.system(size: 13))
                     .foregroundColor(.primary)
                 Spacer()
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 20))
-                    .foregroundColor(selected ? .iframeTeal : Color(uiColor: .tertiaryLabel))
+                    .font(.system(size: 16))
+                    .foregroundColor(selected ? .iframeTeal : Color(nsColor: .tertiaryLabelColor))
             }
             .frameFieldBackground(highlighted: selected)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 }
 
 private extension View {
-    /// The rounded, hairline-bordered field box used throughout Pinry Saver.
+    /// The rounded, hairline-bordered field box used throughout the iPad app.
     func frameFieldBackground(highlighted: Bool = false) -> some View {
-        padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .background(Color(uiColor: .secondarySystemBackground))
-            .cornerRadius(12)
+        padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(10)
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(highlighted ? Color.iframeTeal : Color(uiColor: .separator),
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(highlighted ? Color.iframeTeal : Color(nsColor: .separatorColor),
                             lineWidth: highlighted ? 2 : 1)
             )
     }

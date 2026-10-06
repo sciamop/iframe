@@ -65,7 +65,11 @@ test('loopback handshake, decode acknowledgements, ping and input', async t => {
   };
   await wait(() => messages.length > 0);
   const hello = JSON.parse(messages[0].data); assert.equal(hello.pin,'1234'); assert.equal(hello.supportsHEVC,false);
-  assert.equal(hello.display.uiScale,2);
+  assert.equal(hello.display.uiScale,2); assert.equal(hello.localCursor,true);
+  // The Mac sends its cursor shape before the welcome; that must not end the session.
+  const cursor = once(session,'message');
+  peer.write(packet(T.cursor,Buffer.from([0,4,0,2,0,17,0,23,0x89,0x50,0x4e,0x47])));
+  assert.equal((await cursor)[0].type,T.cursor);
   const streaming = once(session,'state');
   peer.write(packet(T.welcome,Buffer.from(JSON.stringify({width:1920,height:1080,codec:0}))));
   assert.equal((await streaming)[0].phase,'streaming');

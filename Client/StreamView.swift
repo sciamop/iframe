@@ -9,12 +9,18 @@ import UIKit
 /// scrolling map 1:1 to the Mac. Touch: tap = click, two-finger tap = right click,
 /// drag = move pointer, long-press then drag = click-drag, two-finger drag = scroll,
 /// three-finger tap = toolbar.
+///
+/// Fingers work in one of two modes. Direct: the pointer jumps to your finger. Trackpad (like
+/// Microsoft Remote Desktop's mouse mode): drags move the pointer relatively with acceleration,
+/// a flick lets it glide to a stop, and taps click wherever the pointer is. Pencil is always direct.
 final class StreamUIView: UIView, UIPointerInteractionDelegate {
     override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
     private var displayLayer: AVSampleBufferDisplayLayer { layer as! AVSampleBufferDisplayLayer }
 
     let session: StreamSession
-    var welcome: Welcome?
+    var welcome: Welcome? {
+        didSet { if welcome != oldValue { layoutCursor() } }
+    }
     var onThreeFingerTap: (() -> Void)?
 
     private let keyboardProxy = KeyboardProxy()
@@ -27,6 +33,19 @@ final class StreamUIView: UIView, UIPointerInteractionDelegate {
     private var focusRect: CGRect?        // normalized, while a Mac text field is focused
     private var keyboardTop: CGFloat?     // in view coordinates, while the on-screen keyboard is up
 
+    var trackpadMode = true
+    private var cursor = CGPoint(x: 0.5, y: 0.5) {   // normalized, where we last put the Mac pointer
+        didSet { positionCursor() }
+    }
+    /// The Mac's pointer, drawn here so it moves the instant you do; capture leaves it out of the video.
+    private let cursorLayer = CALayer()
+    private var macCursor: MacCursor?
+    private var touchIsPencil = false
+    private var lastDragLocation: CGPoint?
+    private var lastDragTime: CFTimeInterval = 0
+    private var glideVelocity = CGPoint.zero        // view points per second
+    private var glideLink: CADisplayLink?
+
     init(session: StreamSession) {
         self.session = session
         super.init(frame: .zero)
@@ -34,11 +53,15 @@ final class StreamUIView: UIView, UIPointerInteractionDelegate {
         isMultipleTouchEnabled = true
         displayLayer.videoGravity = .resizeAspect
         addInteraction(UIPointerInteraction(delegate: self))
+        cursorLayer.isHidden = true   // until the Mac sends a shape (older hosts draw it in the video)
+        cursorLayer.zPosition = 1
+        layer.addSublayer(cursorLayer)
         keyboardProxy.session = session
         addSubview(keyboardProxy)
         setUpGestures()
         session.attach(renderer: displayLayer.sampleBufferRenderer)
         session.onTextFocus = { [weak self] editable, rect in self?.textFocusChanged(editable, rect) }
+        session.onCursor = { [weak self] cursor in self?.cursorChanged(cursor) }
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardFrameChanged(_:)),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)),
@@ -102,6 +125,7 @@ final class StreamUIView: UIView, UIPointerInteractionDelegate {
             DispatchQueue.main.async { self.becomeFirstResponder() }
         } else {
             releaseKeys()
+            stopGlide()   // the display link retains us
         }
     }
 
@@ -112,6 +136,7 @@ final class StreamUIView: UIView, UIPointerInteractionDelegate {
     /// When the iPad rotates, reshape the Mac's virtual display to match instead of letterboxing.
     override func layoutSubviews() {
         super.layoutSubviews()
+        layoutCursor()
         guard let welcome, welcome.isVirtual, bounds.width > 0, bounds.height > 0 else { return }
         let viewIsLandscape = bounds.width > bounds.height
         let streamIsLandscape = welcome.width > welcome.height
@@ -190,7 +215,113 @@ final class StreamUIView: UIView, UIPointerInteractionDelegate {
 
     @objc private func handleHover(_ g: UIHoverGestureRecognizer) {
         guard g.state == .began || g.state == .changed else { return }
-        session.mouseMove(normalized(g.location(in: self)))
+        moveCursor(to: normalized(g.location(in: self)))
+    }
+
+    // MARK: Local cursor
+
+    private func cursorChanged(_ cursor: MacCursor) {
+        macCursor = cursor
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        cursorLayer.contents = cursor.image
+        cursorLayer.contentsScale = 2
+        cursorLayer.isHidden = false
+        CATransaction.commit()
+        layoutCursor()
+    }
+
+    /// Sizes the pointer like it would be on the Mac: Mac points scaled to the video on screen.
+    private func layoutCursor() {
+        guard let macCursor, let welcome, welcome.pointWidth > 0 else { return }
+        let scale = videoRect.width / CGFloat(welcome.pointWidth)   // view points per Mac point
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        cursorLayer.bounds = CGRect(x: 0, y: 0, width: macCursor.size.width * scale, height: macCursor.size.height * scale)
+        cursorLayer.anchorPoint = CGPoint(x: macCursor.size.width > 0 ? macCursor.hotspot.x / macCursor.size.width : 0,
+                                          y: macCursor.size.height > 0 ? macCursor.hotspot.y / macCursor.size.height : 0)
+        CATransaction.commit()
+        positionCursor()
+    }
+
+    private func positionCursor() {
+        guard macCursor != nil else { return }
+        let rect = videoRect
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        cursorLayer.position = CGPoint(x: rect.minX + cursor.x * rect.width, y: rect.minY + cursor.y * rect.height)
+        CATransaction.commit()
+    }
+
+    /// Fingers in trackpad mode act on the pointer, not on the spot they touch.
+    private var relative: Bool { trackpadMode && !touchIsPencil }
+
+    private func moveCursor(to p: CGPoint) {
+        cursor = p
+        session.mouseMove(p)
+    }
+
+    /// Moves the pointer by a distance in view points.
+    private func moveCursor(by d: CGPoint) {
+        let rect = videoRect
+        guard rect.width > 0, rect.height > 0 else { return }
+        moveCursor(to: CGPoint(x: min(max(cursor.x + d.x / rect.width, 0), 1),
+                               y: min(max(cursor.y + d.y / rect.height, 0), 1)))
+    }
+
+    /// Pointer acceleration: slow drags stay precise, fast ones cover the screen.
+    private func gain(forSpeed speed: CGFloat) -> CGFloat {
+        let t = min(max((speed - 80) / 1400, 0), 1)
+        return 1 + 2.2 * t * t * (3 - 2 * t)
+    }
+
+    private func clickTarget(_ g: UIGestureRecognizer) -> CGPoint {
+        relative ? cursor : normalized(g.location(in: self))
+    }
+
+    // MARK: Flick glide
+
+    private func startGlide(_ velocity: CGPoint) {
+        let speed = hypot(velocity.x, velocity.y)
+        guard speed > 350 else { return }
+        let g = gain(forSpeed: speed)
+        glideVelocity = CGPoint(x: velocity.x * g, y: velocity.y * g)
+        if glideLink == nil {
+            let link = CADisplayLink(target: self, selector: #selector(glideStep(_:)))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+            link.add(to: .main, forMode: .common)
+            glideLink = link
+        }
+    }
+
+    @objc private func glideStep(_ link: CADisplayLink) {
+        let dt = CGFloat(min(link.targetTimestamp - link.timestamp, 1.0 / 30))
+        moveCursor(by: CGPoint(x: glideVelocity.x * dt, y: glideVelocity.y * dt))
+        let decay = exp(-dt * 4.5)   // ~0.22 s time constant: a quick, smooth ease-out
+        glideVelocity = CGPoint(x: glideVelocity.x * decay, y: glideVelocity.y * decay)
+        // Stop when it's crawling or pinned against an edge.
+        let pinnedX = (cursor.x <= 0 && glideVelocity.x < 0) || (cursor.x >= 1 && glideVelocity.x > 0)
+        let pinnedY = (cursor.y <= 0 && glideVelocity.y < 0) || (cursor.y >= 1 && glideVelocity.y > 0)
+        if pinnedX { glideVelocity.x = 0 }
+        if pinnedY { glideVelocity.y = 0 }
+        if hypot(glideVelocity.x, glideVelocity.y) < 25 { stopGlide() }
+    }
+
+    private func stopGlide() {
+        glideLink?.invalidate()
+        glideLink = nil
+        glideVelocity = .zero
+    }
+
+    /// Relative drag step with acceleration, shared by plain drags and click-drags.
+    private func relativeDrag(to location: CGPoint, began: Bool) {
+        let now = CACurrentMediaTime()
+        defer { lastDragLocation = location; lastDragTime = now }
+        guard !began, let last = lastDragLocation else { return }
+        let d = CGPoint(x: location.x - last.x, y: location.y - last.y)
+        let dt = max(now - lastDragTime, 1.0 / 240)
+        let g = gain(forSpeed: hypot(d.x, d.y) / CGFloat(dt))
+        moveCursor(by: CGPoint(x: d.x * g, y: d.y * g))
     }
 
     @objc private func handleScroll(_ g: UIPanGestureRecognizer) {
@@ -201,11 +332,15 @@ final class StreamUIView: UIView, UIPointerInteractionDelegate {
     }
 
     @objc private func handleTap(_ g: UITapGestureRecognizer) {
-        session.click(0, at: normalized(g.location(in: self)))
+        let p = clickTarget(g)
+        cursor = p
+        session.click(0, at: p)
     }
 
     @objc private func handleTwoFingerTap(_ g: UITapGestureRecognizer) {
-        session.click(1, at: normalized(g.location(in: self)))
+        let p = clickTarget(g)
+        cursor = p
+        session.click(1, at: p)
     }
 
     @objc private func handleThreeFingerTap(_ g: UITapGestureRecognizer) {
@@ -213,39 +348,65 @@ final class StreamUIView: UIView, UIPointerInteractionDelegate {
     }
 
     @objc private func handleLongPress(_ g: UILongPressGestureRecognizer) {
-        let p = normalized(g.location(in: self))
+        let location = g.location(in: self)
         switch g.state {
         case .began:
-            session.mouseMove(p)
-            session.mouseButton(0, down: true, at: p)
+            if relative {
+                relativeDrag(to: location, began: true)
+            } else {
+                moveCursor(to: normalized(location))
+            }
+            session.mouseButton(0, down: true, at: cursor)
         case .changed:
-            session.mouseMove(p)
+            if relative {
+                relativeDrag(to: location, began: false)
+            } else {
+                moveCursor(to: normalized(location))
+            }
         case .ended, .cancelled, .failed:
-            session.mouseButton(0, down: false, at: p)
+            session.mouseButton(0, down: false, at: cursor)
         default:
             break
         }
     }
 
     @objc private func handleDrag(_ g: UIPanGestureRecognizer) {
-        guard g.state == .began || g.state == .changed else { return }
-        session.mouseMove(normalized(g.location(in: self)))
+        let location = g.location(in: self)
+        switch g.state {
+        case .began, .changed:
+            if relative {
+                relativeDrag(to: location, began: g.state == .began)
+            } else {
+                moveCursor(to: normalized(location))
+            }
+        case .ended:
+            if relative { startGlide(g.velocity(in: self)) }
+        default:
+            break
+        }
     }
 
     // MARK: Trackpad / mouse buttons (needs UIApplicationSupportsIndirectInputEvents)
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if let touch = touches.first(where: { $0.type != .indirectPointer }) {
+            touchIsPencil = touch.type == .pencil
+            stopGlide()   // touching down catches a gliding pointer, like a trackpad
+        }
         for touch in touches where touch.type == .indirectPointer {
+            stopGlide()
             let button: UInt8 = event?.buttonMask.contains(.secondary) == true ? 1 : 0
             pointerButton = button
-            session.mouseButton(button, down: true, at: normalized(touch.location(in: self)))
+            let p = normalized(touch.location(in: self))
+            cursor = p
+            session.mouseButton(button, down: true, at: p)
         }
         super.touchesBegan(touches, with: event)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches where touch.type == .indirectPointer {
-            session.mouseMove(normalized(touch.location(in: self)))
+            moveCursor(to: normalized(touch.location(in: self)))
         }
         super.touchesMoved(touches, with: event)
     }
@@ -267,7 +428,7 @@ final class StreamUIView: UIView, UIPointerInteractionDelegate {
         }
     }
 
-    /// Hide the iPad pointer; the Mac's own cursor is in the video.
+    /// Hide the iPad pointer; we draw the Mac's own cursor (or it's in the video).
     func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
         .hidden()
     }
@@ -410,6 +571,7 @@ struct StreamViewRepresentable: UIViewRepresentable {
     let session: StreamSession
     let welcome: Welcome?
     let handle: StreamViewHandle
+    let trackpadMode: Bool
     let onThreeFingerTap: () -> Void
 
     func makeUIView(context: Context) -> StreamUIView {
@@ -424,18 +586,21 @@ struct StreamViewRepresentable: UIViewRepresentable {
             view.setNeedsLayout()
         }
         view.onThreeFingerTap = onThreeFingerTap
+        view.trackpadMode = trackpadMode
     }
 }
 
 struct StreamScreen: View {
     @EnvironmentObject private var session: StreamSession
     @StateObject private var handle = StreamViewHandle()
+    @AppStorage("trackpadMode") private var trackpadMode = true
     @State private var showToolbar = true
     @State private var showStats = false
 
     var body: some View {
         ZStack(alignment: .top) {
-            StreamViewRepresentable(session: session, welcome: session.welcome, handle: handle) {
+            StreamViewRepresentable(session: session, welcome: session.welcome, handle: handle,
+                                    trackpadMode: trackpadMode) {
                 withAnimation(.easeOut(duration: 0.15)) { showToolbar.toggle() }
             }
             .ignoresSafeArea()
@@ -483,6 +648,8 @@ struct StreamScreen: View {
     private var toolbar: some View {
         HStack(spacing: 12) {
             ToolbarCircle(symbol: "keyboard") { handle.view?.toggleSoftwareKeyboard() }
+            // Lit = trackpad mode (relative pointer with flick glide); off = pointer follows finger.
+            ToolbarCircle(symbol: "rectangle.and.hand.point.up.left", active: trackpadMode) { trackpadMode.toggle() }
             ToolbarCircle(symbol: "gauge.with.dots.needle.50percent", active: showStats) { showStats.toggle() }
             ToolbarCircle(symbol: "xmark") { session.disconnect() }
             ToolbarCircle(symbol: "chevron.up") {
@@ -507,30 +674,5 @@ private struct ToolbarCircle: View {
                 .clipShape(Circle())
         }
         .buttonStyle(.plain)
-    }
-}
-
-struct StatsView: View {
-    let stats: ClientStats
-    let welcome: Welcome?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            if let w = welcome {
-                Text("\(w.hostName) · \(w.width)×\(w.height) \(w.codec.name) @ \(w.fps)")
-            }
-            if let h = stats.host {
-                Text(String(format: "%.0f fps · %.1f Mbps (target %.0f)", h.fps, h.mbps, h.targetMbps))
-                Text(String(format: "encode %.1f ms · decode %.1f ms", h.encodeMs, stats.decodeMs))
-                Text(String(format: "net RTT %.1f ms · frame ack %.1f ms", stats.rttMs, h.latencyMs))
-                if h.dropped > 0 { Text("skipped \(h.dropped) frames (congestion)") }
-            } else {
-                Text("waiting for stats…")
-            }
-        }
-        .font(.system(size: 11, design: .monospaced))
-        .foregroundStyle(.white)
-        .padding(8)
-        .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
     }
 }

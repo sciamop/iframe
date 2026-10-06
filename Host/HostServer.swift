@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 import IOKit.pwr_mgt
 import Network
@@ -102,6 +103,9 @@ final class ClientSession {
     private var focusTimer: DispatchSourceTimer?
     private var lastFocus = FocusWatcher.Focus.none
     private var streamDisplay: CGDirectDisplayID?
+    private var cursorWatcher: CursorWatcher?
+    private var inputCounts: [String: Int] = [:]
+    private var lastInputLog = Date()
 
     init(connection: NWConnection, server: HostServer, queue: DispatchQueue) {
         self.channel = MessageChannel(connection: connection, queue: queue)
@@ -137,6 +141,8 @@ final class ClientSession {
         streamer = nil
         focusTimer?.cancel()
         focusTimer = nil
+        cursorWatcher?.stop()
+        cursorWatcher = nil
         if sleepAssertion != 0 {
             IOPMAssertionRelease(sleepAssertion)
             sleepAssertion = 0
@@ -156,6 +162,7 @@ final class ClientSession {
         }
         var r = ByteReader(data)
         let input = server.injector
+        countInput(type, data)
         switch type {
         case .mouseMove:
             if let x = r.f32(), let y = r.f32() { input.move(x: x, y: y) }
@@ -211,6 +218,43 @@ final class ClientSession {
         self.hello = hello
         restartStream(display: hello.display)
         startFocusWatcher()
+        if hello.localCursor == true {
+            let watcher = CursorWatcher()
+            watcher.onChange = { [weak self] shape in
+                var w = ByteWriter(capacity: shape.png.count + 8)
+                w.u16(UInt16(clamping: shape.hotspotX))
+                w.u16(UInt16(clamping: shape.hotspotY))
+                w.u16(UInt16(clamping: shape.pointWidth))
+                w.u16(UInt16(clamping: shape.pointHeight))
+                w.bytes(shape.png)
+                self?.channel.send(.cursor, w.data)
+            }
+            watcher.start()
+            cursorWatcher = watcher
+        }
+    }
+
+    /// Periodic summary of input received, so input problems show up in the log.
+    private func countInput(_ type: MsgType, _ data: Data) {
+        let label: String
+        switch type {
+        case .mouseMove: label = "moves"
+        case .mouseButton: label = "clicks"
+        case .scroll: label = "scrolls"
+        case .key: label = "keys"
+        case .text: label = "text"
+        default: return
+        }
+        inputCounts[label, default: 0] += 1
+        if type == .key, data.count >= 3 {
+            inputCounts["last key 0x" + String(Int(data[data.startIndex]) << 8 | Int(data[data.startIndex + 1]), radix: 16)] = 0
+        }
+        guard Date().timeIntervalSince(lastInputLog) > 5 else { return }
+        let summary = inputCounts.sorted { $0.key < $1.key }
+            .map { $0.value > 0 ? "\($0.key) \($0.value)" : $0.key }.joined(separator: ", ")
+        hostLog("input from \(name): \(summary)\(AXIsProcessTrusted() ? "" : " — NOT INJECTED: Accessibility permission missing")")
+        inputCounts = [:]
+        lastInputLog = Date()
     }
 
     private var hello: Hello?
@@ -235,7 +279,8 @@ final class ClientSession {
                 if virtual == nil { hostLog("falling back to the existing display") }
             }
 
-            let display = try await findDisplay(id: virtual?.displayID)
+            let expected = virtual.map { VirtualScreen.pointSize(for: $0.request) }
+            let display = try await findDisplay(id: virtual?.displayID, expectedPoints: expected)
             let mode = CGDisplayCopyDisplayMode(display.displayID)
             let refresh = mode?.refreshRate ?? 60
             let fps = min(fpsLimit, refresh > 0 ? Int(refresh.rounded()) : 60)
@@ -256,7 +301,8 @@ final class ClientSession {
                 maxBitrate: Int(startMbps * 1.5 * 1_000_000),
                 maxInflight: server.config.maxInflight)
 
-            let streamer = try Streamer(display: display, codec: codec, config: config, captureSize: capture)
+            let streamer = try Streamer(display: display, codec: codec, config: config, captureSize: capture,
+                                        showsCursor: hello.localCursor != true)
             streamer.onFormat = { [weak self] codec, sets in
                 self?.channel.send(.format, Wire.format(codec: codec, parameterSets: sets))
             }
@@ -282,6 +328,7 @@ final class ClientSession {
                         codec: streamer.codec, fps: fps,
                         hostName: Host.current().localizedName ?? "Mac",
                         isVirtual: virtual != nil))
+                    self.cursorWatcher?.resend()  // the client rebuilds its cursor for the new scale
                     continuation.resume(returning: true)
                 }
             }
@@ -324,11 +371,16 @@ final class ClientSession {
     }
 
     /// A freshly created virtual display can take a moment to show up in ScreenCaptureKit.
-    private func findDisplay(id: CGDirectDisplayID?) async throws -> SCDisplay {
+    /// ScreenCaptureKit can briefly report a stale display (old size) after a reshape, so for
+    /// virtual displays wait until it reports the expected point size too.
+    private func findDisplay(id: CGDirectDisplayID?, expectedPoints: (width: Int, height: Int)? = nil) async throws -> SCDisplay {
         for attempt in 0..<20 {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             if let id {
-                if let match = content.displays.first(where: { $0.displayID == id }) { return match }
+                if let match = content.displays.first(where: { $0.displayID == id }),
+                   expectedPoints.map({ abs(match.width - $0.width) <= 1 && abs(match.height - $0.height) <= 1 }) ?? true {
+                    return match
+                }
             } else {
                 let main = CGMainDisplayID()
                 let displays = content.displays.sorted {

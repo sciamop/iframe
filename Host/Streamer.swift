@@ -70,7 +70,11 @@ final class Streamer: NSObject, SCStreamOutput, SCStreamDelegate {
     private var statsTimer: DispatchSourceTimer?
     private var stopped = false
 
-    init(display: SCDisplay, codec preferred: VideoCodec, config: Config, captureSize: (width: Int, height: Int)? = nil) throws {
+    private let showsCursor: Bool
+
+    init(display: SCDisplay, codec preferred: VideoCodec, config: Config, captureSize: (width: Int, height: Int)? = nil,
+         showsCursor: Bool = true) throws {
+        self.showsCursor = showsCursor
         self.display = display
         self.config = config
         self.fps = config.fps
@@ -158,7 +162,7 @@ final class Streamer: NSObject, SCStreamOutput, SCStreamDelegate {
         cfg.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         cfg.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
         cfg.colorSpaceName = CGColorSpace.sRGB
-        cfg.showsCursor = true
+        cfg.showsCursor = showsCursor
         cfg.queueDepth = 5
         cfg.capturesAudio = false
         if #available(macOS 14.0, *) { cfg.captureResolution = .best }
@@ -398,7 +402,11 @@ final class Streamer: NSObject, SCStreamOutput, SCStreamDelegate {
             var pointer: UnsafePointer<UInt8>?
             var size = 0
             guard get(index, &pointer, &size, nil) == noErr, let pointer else { return nil }
-            return Data(bytes: pointer, count: size)
+            let set = Data(bytes: pointer, count: size)
+            if codec == .h264, set.first.map({ $0 & 0x1F == 7 }) == true {
+                return H264SPS.withoutReordering(set) ?? set
+            }
+            return set
         }
     }
 }
