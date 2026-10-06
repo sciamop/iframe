@@ -1,8 +1,15 @@
 import AVFoundation
 import Combine
+import ImageIO
 import Network
-import UIKit
 import VideoToolbox
+
+/// The Mac's cursor shape. Hotspot and size are in Mac points; the image is 2x.
+struct MacCursor {
+    var image: CGImage
+    var hotspot: CGPoint
+    var size: CGSize
+}
 
 struct ClientStats: Equatable {
     var host: HostStats?
@@ -12,7 +19,7 @@ struct ClientStats: Equatable {
 }
 
 /// Owns the connection to iframe-host: receives and decodes video straight into the display
-/// layer's renderer on one high-priority queue, and sends input.
+/// layer's renderer on one high-priority queue, and sends input. Shared by the iPad and Mac apps.
 final class StreamSession: ObservableObject {
     enum Phase: Equatable {
         case idle
@@ -29,6 +36,9 @@ final class StreamSession: ObservableObject {
     /// Called on the main thread when a Mac text field gains (true) or loses focus.
     /// The rect is normalized over the stream.
     var onTextFocus: ((Bool, CGRect) -> Void)?
+
+    /// Called on the main thread with the Mac's cursor shape whenever it changes.
+    var onCursor: ((MacCursor) -> Void)?
 
     // Everything below is confined to `queue`.
     private let queue = DispatchQueue(label: "iframe.client", qos: .userInteractive)
@@ -55,18 +65,13 @@ final class StreamSession: ObservableObject {
 
     // MARK: Connection
 
-    /// Mac points per iPad pixel choice (see DisplayRequest). 0 = use the Mac's own display.
+    /// Mac points per client pixel choice (see DisplayRequest). 0 = use the Mac's own display.
     private var uiScale: Double = 2
 
-    /// The current screen in pixels, in the current orientation.
-    static func screenPixels() -> CGSize {
-        let screen = UIScreen.main
-        return CGSize(width: screen.bounds.width * screen.scale, height: screen.bounds.height * screen.scale)
-    }
-
-    func connect(to endpoint: NWEndpoint, pin: String, label: String, uiScale: Double) {
+    /// `pixels` is the client's screen (or window) size in pixels.
+    func connect(to endpoint: NWEndpoint, pin: String, label: String, deviceName: String, maxFPS: Int,
+                 pixels: CGSize, uiScale: Double) {
         self.uiScale = uiScale
-        let pixels = Self.screenPixels()
         hostLabel = label
         phase = .connecting
         stats = ClientStats()
@@ -74,10 +79,11 @@ final class StreamSession: ObservableObject {
         let hello = Hello(
             version: IFrame.protocolVersion,
             pin: pin.trimmingCharacters(in: .whitespaces),
-            name: UIDevice.current.name,
+            name: deviceName,
             supportsHEVC: VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC),
-            maxFPS: UIScreen.main.maximumFramesPerSecond,
-            display: DisplayRequest(width: Int(pixels.width), height: Int(pixels.height), uiScale: uiScale))
+            maxFPS: maxFPS,
+            display: DisplayRequest(width: Int(pixels.width), height: Int(pixels.height), uiScale: uiScale),
+            localCursor: true)
 
         queue.async { [self] in
             teardown()
@@ -107,8 +113,10 @@ final class StreamSession: ObservableObject {
         }
     }
 
-    /// Asks the host to reshape its virtual display, e.g. after the iPad rotates.
-    func requestDisplay(pixels: CGSize) {
+    /// Asks the host to reshape its virtual display, e.g. after the iPad rotates or the Mac window resizes.
+    /// Pass `uiScale` to change density too.
+    func requestDisplay(pixels: CGSize, uiScale newScale: Double? = nil) {
+        if let newScale { uiScale = newScale }
         guard uiScale > 0, let data = try? JSONEncoder().encode(
             DisplayRequest(width: Int(pixels.width), height: Int(pixels.height), uiScale: uiScale)) else { return }
         send(.display, data)
@@ -167,6 +175,14 @@ final class StreamSession: ObservableObject {
             guard let editable = r.u8(), let x = r.f32(), let y = r.f32(), let w = r.f32(), let h = r.f32() else { return }
             let rect = CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(w), height: CGFloat(h))
             DispatchQueue.main.async { self.onTextFocus?(editable != 0, rect) }
+        case .cursor:
+            var r = ByteReader(data)
+            guard let hx = r.u16(), let hy = r.u16(), let w = r.u16(), let h = r.u16(),
+                  let source = CGImageSourceCreateWithData(r.rest() as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
+            let cursor = MacCursor(image: image, hotspot: CGPoint(x: Int(hx), y: Int(hy)),
+                                   size: CGSize(width: Int(w), height: Int(h)))
+            DispatchQueue.main.async { self.onCursor?(cursor) }
         case .stats:
             hostStats = try? JSONDecoder().decode(HostStats.self, from: data)
         case .pong:
@@ -272,6 +288,10 @@ final class StreamSession: ObservableObject {
         w.u8(action.rawValue)
         w.u32(mods.rawValue)
         send(.key, w.data)
+    }
+
+    func requestKeyframe() {
+        send(.requestKeyframe)
     }
 
     func tapKey(_ code: UInt16) {

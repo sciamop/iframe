@@ -19,3 +19,6 @@ Windows/test-output/
 # Linux client
 Linux/build/
 LinuxHost/build/
+
+# Mac client
+dist/
