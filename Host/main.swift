@@ -28,7 +28,7 @@ HOST OPTIONS
   --pin <digits>    fixed PIN (default: random each launch)
 
 PROBE OPTIONS
-  --pin <digits>  --port <n>  --seconds <n>  --screen <w>x<h>[@scale]
+  --pin <digits>  --port <n>  --seconds <n>  --screen <w>x<h>[@scale]  --h264  --local-cursor
 """
 
 var arguments = Array(CommandLine.arguments.dropFirst())

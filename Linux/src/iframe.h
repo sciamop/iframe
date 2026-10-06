@@ -22,6 +22,7 @@ enum {
     MSG_PONG = 0x05,
     MSG_AUTH_FAILED = 0x06,
     MSG_TEXT_FOCUS = 0x07,
+    MSG_CURSOR = 0x08,          // hotspot x, y, size w, h (u16, Mac points), then a PNG at 2x
     // client -> host
     MSG_HELLO = 0x10,
     MSG_MOUSE_MOVE = 0x11,
@@ -77,6 +78,9 @@ bool json_number(const char *json, size_t len, const char *key, double *out);
 bool json_string(const char *json, size_t len, const char *key, char *out, size_t cap);
 bool json_bool(const char *json, size_t len, const char *key, bool *out);
 void json_escape(const char *in, char *out, size_t cap);
+
+// cursor.c — the Mac's cursor shape arrives as a PNG; decodes it to RGBA (caller frees).
+bool cursor_decode_png(const uint8_t *png, size_t len, uint8_t **rgba, int *width, int *height);
 
 // discover.c — Bonjour browsing via avahi-browse.
 typedef struct {

@@ -402,7 +402,11 @@ final class Streamer: NSObject, SCStreamOutput, SCStreamDelegate {
             var pointer: UnsafePointer<UInt8>?
             var size = 0
             guard get(index, &pointer, &size, nil) == noErr, let pointer else { return nil }
-            return Data(bytes: pointer, count: size)
+            let set = Data(bytes: pointer, count: size)
+            if codec == .h264, set.first.map({ $0 & 0x1F == 7 }) == true {
+                return H264SPS.withoutReordering(set) ?? set
+            }
+            return set
         }
     }
 }
