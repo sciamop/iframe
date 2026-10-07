@@ -11,6 +11,8 @@ func runProbe() -> Never {
     let pin = option("--pin") ?? ""
     let seconds = option("--seconds").flatMap(Double.init) ?? 10
     let skipDecode = arguments.contains("--no-decode")
+    let forceH264 = arguments.contains("--h264")   // what Windows clients get
+    let localCursor = arguments.contains("--local-cursor")
     // e.g. --screen 2388x1668@2 to exercise the virtual display like an 11" iPad Pro would.
     let screen: DisplayRequest? = option("--screen").flatMap { spec in
         let parts = spec.split(separator: "@")
@@ -48,8 +50,8 @@ func runProbe() -> Never {
             print("probe: connected to \(host):\(port)")
             channel.send(.hello, json: Hello(
                 version: IFrame.protocolVersion, pin: pin, name: "iframe-probe",
-                supportsHEVC: VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC), maxFPS: 120,
-                display: screen))
+                supportsHEVC: !forceH264 && VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC), maxFPS: 120,
+                display: screen, localCursor: localCursor))
             let timer = DispatchSource.makeTimerSource(queue: queue)
             timer.schedule(deadline: .now() + 0.25, repeating: 0.25)
             timer.setEventHandler {
@@ -80,8 +82,17 @@ func runProbe() -> Never {
             print("probe: wrong PIN")
             exit(2)
         case .format:
-            if let (codec, sets) = Wire.parseFormat(data), !decoder.setFormat(codec: codec, parameterSets: sets) {
+            guard let (codec, sets) = Wire.parseFormat(data) else { return }
+            if codec == .h264, let sps = sets.first(where: { $0.first.map { $0 & 0x1F == 7 } == true }) {
+                print("probe: SPS \(sps.map { String(format: "%02x", $0) }.joined())")
+            }
+            if !decoder.setFormat(codec: codec, parameterSets: sets) {
                 print("probe: could not create decoder")
+            }
+        case .cursor:
+            var r = ByteReader(data)
+            if let hx = r.u16(), let hy = r.u16(), let w = r.u16(), let h = r.u16() {
+                print("probe: cursor \(w)x\(h) pt, hotspot \(hx),\(hy), PNG \(r.rest().count) bytes")
             }
         case .frame:
             guard let frame = Wire.parseFrame(data) else { return }

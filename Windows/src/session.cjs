@@ -24,7 +24,9 @@ class Session extends EventEmitter {
         this.emit('message', { type, data });
         this.emit('state', { phase: 'streaming', welcome: w });
       } else if (!welcomed) {
-        throw new Error('Unexpected message before welcome');
+        // The Mac's cursor shape can arrive first; anything else is a protocol error.
+        if (type !== T.cursor) throw new Error('Unexpected message before welcome');
+        this.emit('message', { type, data });
       } else if (type === T.pong) {
         if (data.length !== 8) throw new Error('Invalid ping response');
         const elapsed = process.hrtime.bigint() - data.readBigUInt64BE();
@@ -45,7 +47,8 @@ class Session extends EventEmitter {
     socket.on('close', () => fail('The host closed the connection. Check the host log (on a Mac, also its screen recording permission).'));
     socket.on('connect', () => {
       this.send(T.hello, Buffer.from(JSON.stringify({ version: 1, pin: o.pin, name: os.hostname(), os: 'windows', supportsHEVC: false,
-        maxFPS: o.fps, display: { width: o.width, height: o.height, uiScale: o.scale } })));
+        // localCursor: the Mac sends its cursor shape and leaves the pointer out of the video.
+        localCursor: true, maxFPS: o.fps, display: { width: o.width, height: o.height, uiScale: o.scale } })));
       this.timer = setInterval(() => {
         if (!this.ready) return;
         if ([...this.pending.values()].some(time => Date.now() - time > 10000))

@@ -29,7 +29,19 @@ final class VirtualScreen {
         self.refreshRate = refreshRate
     }
 
+    /// Largest backing size (pixels per side) a display may use. The display is created at this
+    /// size up front so any client shape can be applied in place: tearing a virtual display down
+    /// and recreating it races with macOS reusing the same display ID.
+    static let maxBackingPixels = 8192
+
+    /// Mac point size the display will have for `request` (what ScreenCaptureKit reports).
+    static func pointSize(for request: DisplayRequest) -> (width: Int, height: Int) {
+        let size = backingPixels(for: request)
+        return (size.pointWidth, size.pointHeight)
+    }
+
     /// Returns a virtual display matching `request`, reusing and reshaping the existing one when possible.
+    /// Returns nil if the display didn't come online in the requested shape.
     static func obtain(for request: DisplayRequest, refreshRate: Double) -> VirtualScreen? {
         let screen = DispatchQueue.main.sync { () -> VirtualScreen? in
             let backing = backingPixels(for: request)
@@ -38,39 +50,56 @@ final class VirtualScreen {
                 if current.request == request, current.refreshRate == refreshRate { return current }
                 if current.apply(request, refreshRate: refreshRate) { return current }
             }
-            shared = nil  // releasing the old display removes it
+            if let old = shared {
+                let oldID = old.displayID
+                shared = nil  // releasing the old display removes it
+                waitUntilGone(oldID)
+            }
             shared = create(for: request, refreshRate: refreshRate)
             return shared
         }
-        screen?.waitUntilReady()
+        // Check readiness on the main thread too: CoreGraphics only refreshes its view of a
+        // reshaped display there; background-thread queries keep returning the old mode.
+        guard let screen, DispatchQueue.main.sync(execute: { screen.waitUntilReady() }) else { return nil }
         return screen
     }
 
+    private static func waitUntilGone(_ id: CGDirectDisplayID) {
+        for _ in 0..<60 where CGDisplayIsOnline(id) != 0 {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+    }
+
     /// A new or reshaped display takes a moment to come online with its mode; capture and
-    /// frame-rate decisions must wait for it. Called off the main thread.
-    private func waitUntilReady() {
+    /// frame-rate decisions must wait for it. Main thread only.
+    private func waitUntilReady() -> Bool {
         let size = Self.backingPixels(for: request)
-        for _ in 0..<60 {
-            if let mode = CGDisplayCopyDisplayMode(displayID), mode.width == size.pointWidth, mode.refreshRate > 0 { break }
-            selectMode(pointWidth: size.pointWidth, pixelWidth: size.width, refreshRate: refreshRate)
+        var ready = false
+        for _ in 0..<100 {
+            if let mode = CGDisplayCopyDisplayMode(displayID), mode.width == size.pointWidth,
+               mode.height == size.pointHeight, mode.pixelWidth == size.width, mode.refreshRate > 0 {
+                ready = true
+                break
+            }
             Thread.sleep(forTimeInterval: 0.05)
         }
         let mode = CGDisplayCopyDisplayMode(displayID)
-        hostLog("virtual display: \(mode?.width ?? 0)x\(mode?.height ?? 0) pt, \(mode?.pixelWidth ?? 0)x\(mode?.pixelHeight ?? 0) px @ \(Int(mode?.refreshRate ?? 0)) Hz (display \(displayID))")
+        hostLog("virtual display\(ready ? "" : " NOT READY"): \(mode?.width ?? 0)x\(mode?.height ?? 0) pt, \(mode?.pixelWidth ?? 0)x\(mode?.pixelHeight ?? 0) px @ \(Int(mode?.refreshRate ?? 0)) Hz (display \(displayID))")
+        return ready
     }
 
     private static func create(for request: DisplayRequest, refreshRate: Double) -> VirtualScreen? {
-        let backing = backingPixels(for: request)
-        // Square max size so the same display can rotate between landscape and portrait.
-        let maxPixels = max(backing.width, backing.height)
+        // Square, generous max size: any orientation or window shape can then be applied in place.
+        let maxPixels = maxBackingPixels
         let descriptor = CGVirtualDisplayDescriptor()
         descriptor.setDispatchQueue(queue)
         descriptor.name = "iFrame Display"
         descriptor.maxPixelsWide = UInt32(maxPixels)
         descriptor.maxPixelsHigh = UInt32(maxPixels)
-        // iPad Pro panels are 264 ppi; physical size drives macOS's default scaling choices.
-        let mm = Double(maxPixels) * 25.4 / 264
-        descriptor.sizeInMillimeters = CGSize(width: mm, height: mm)
+        // A small physical size (very high ppi) makes macOS default to the HiDPI variant of each
+        // mode. We must never select modes ourselves: after any CGDisplaySetDisplayMode or
+        // CGConfigureDisplayWithDisplayMode, macOS ignores later applySettings reshapes.
+        descriptor.sizeInMillimeters = CGSize(width: 263, height: 263)
         descriptor.vendorID = 0x676C   // "gl"
         descriptor.productID = 0x6964  // "id"
         descriptor.serialNum = 1
@@ -88,7 +117,10 @@ final class VirtualScreen {
 
     /// Mac points and backing pixels for a request. HiDPI modes always render at 2x points.
     private static func backingPixels(for request: DisplayRequest) -> (width: Int, height: Int, pointWidth: Int, pointHeight: Int) {
-        let scale = min(max(request.uiScale, 1), 2)
+        var scale = min(max(request.uiScale, 1), 2)
+        // HiDPI renders at 2x points; keep that within the display's maximum.
+        let longest = Double(max(request.width, request.height))
+        scale = max(scale, longest * 2 / Double(maxBackingPixels))
         let pw = Int((Double(request.width) / scale).rounded()) & ~1
         let ph = Int((Double(request.height) / scale).rounded()) & ~1
         return (pw * 2, ph * 2, pw, ph)
@@ -106,18 +138,6 @@ final class VirtualScreen {
         guard display.apply(settings) else { return false }
         self.request = request
         self.refreshRate = refreshRate
-        selectMode(pointWidth: size.pointWidth, pixelWidth: size.width, refreshRate: refreshRate)
         return true
-    }
-
-    /// macOS usually picks the right mode itself; make sure it's the HiDPI one at full refresh.
-    private func selectMode(pointWidth: Int, pixelWidth: Int, refreshRate: Double) {
-        let options = [kCGDisplayShowDuplicateLowResolutionModes: true] as CFDictionary
-        if let current = CGDisplayCopyDisplayMode(displayID),
-           current.width == pointWidth, current.pixelWidth == pixelWidth, current.refreshRate == refreshRate { return }
-        let modes = CGDisplayCopyAllDisplayModes(displayID, options) as? [CGDisplayMode] ?? []
-        if let match = modes.first(where: { $0.width == pointWidth && $0.pixelWidth == pixelWidth && $0.refreshRate == refreshRate }) {
-            CGDisplaySetDisplayMode(displayID, match, nil)
-        }
     }
 }

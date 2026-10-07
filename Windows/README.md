@@ -63,7 +63,7 @@ FFmpeg is only needed to regenerate that fixture. Real Mac capture, permission b
 - Converts four-byte AVCC NAL lengths to Annex B and injects SPS/PPS on keyframes. Frames are drawn directly to a canvas and acknowledged after decode and drawing, preserving the host's flow control. Malformed frames trigger throttled keyframe recovery; repeated decoder errors close the session.
 - The renderer is sandboxed with context isolation, no Node integration, a restrictive content security policy, and a narrow validated IPC bridge. Socket framing is bounded at the host protocol's 32 MiB maximum.
 - The host protocol is **not encrypted**. Use a trusted LAN or Tailscale; do not expose the host directly to the Internet.
-- No audio, automatic clipboard synchronization, HEVC, or local remote-cursor overlay. The Mac cursor is part of the video. The Send text button is an explicit text transfer, not clipboard sync.
+- No audio, automatic clipboard synchronization, or HEVC. (The Mac's cursor is drawn locally as the Windows pointer, in the Mac's current shape.) The Send text button is an explicit text transfer, not clipboard sync.
 - This is an Electron client, not a native WinUI application. It includes Chromium and therefore has a larger distribution and memory footprint.
 
 MIT, matching the repository license. Bundled Electron and dependency licenses are included in the distribution.

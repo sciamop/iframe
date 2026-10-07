@@ -1,7 +1,7 @@
 'use strict';
 const MAX_MESSAGE = 32 << 20;
 const T = Object.freeze({ welcome: 1, format: 2, frame: 3, stats: 4, pong: 5,
-  authFailed: 6, textFocus: 7, hello: 16, mouseMove: 17, mouseButton: 18,
+  authFailed: 6, textFocus: 7, cursor: 8, hello: 16, mouseMove: 17, mouseButton: 18,
   scroll: 19, key: 20, text: 21, requestKeyframe: 22, ping: 23, ack: 24, display: 25 });
 
 function packet(type, payload = Buffer.alloc(0)) {

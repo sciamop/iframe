@@ -1,10 +1,10 @@
 # iFrame
 
-Low-latency Mac → iPad or Windows remote desktop for Apple silicon. It sends a video stream instead of pixel tiles.
+Low-latency Mac → iPad, Mac, Windows or Linux remote desktop for Apple silicon. It sends a video stream instead of pixel tiles.
 
 **Host requirements:** a Mac with Apple silicon running macOS 14 or later (developed on an M4 Mac mini, macOS 15) and Xcode command-line tools.
 
-**Clients:** an iPad on iPadOS 17 or later, or a Windows 10/11 x64 PC. Building the iPad app requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen), plus `rsvg-convert` and ImageMagick if you regenerate icons (`brew install xcodegen librsvg imagemagick`). The [Windows client](Windows/README.md) uses Node.js to build and includes its runtime when packaged.
+**Clients:** an iPad on iPadOS 17 or later, a Mac on macOS 14 or later (Apple silicon or Intel), or a Windows 10/11 x64 PC. Building the iPad app requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen), plus `rsvg-convert` and ImageMagick if you regenerate icons (`brew install xcodegen librsvg imagemagick`). The [Windows client](Windows/README.md) uses Node.js to build and includes its runtime when packaged.
 
 ```
 Mac (iframe-host)                                   iPad (iFrame app)
@@ -18,6 +18,7 @@ CGEvent input injection
 ```
 
 What makes it fast:
+- **Local cursor.** The Mac sends its cursor shape (arrow, I-beam, resize…) and leaves the pointer out of the video. Every client draws it at the local pointer position, so it moves with no network delay.
 - **Zero-copy pipeline.** Capture hands IOSurfaces straight to the media engine. No color conversion and no CPU copies.
 - **Low-latency rate control.** One frame in, one frame out, no reordering. Keyframes only on connect or after an error, so there are no periodic spikes.
 - **Ack-based flow control.** At most 3 frames can be unacknowledged. When Wi-Fi backs up, frames are skipped *before* encoding instead of piling up in socket buffers, and the newest screen goes out as soon as the link frees up. Lag never builds up.
@@ -55,6 +56,30 @@ open iFrame.xcodeproj
 Building it yourself? Change `DEVELOPMENT_TEAM` and the `com.toddfaulls` bundle IDs in `project.yml` (and `LABEL` in `scripts/install-host.sh`) to your own. Then run it on your iPad. A free Apple ID works, but the install expires after 7 days.
 
 Your Mac appears under **Mac** on the connect screen. Enter the PIN, pick a display density, and tap **Connect**.
+
+## Client (Mac)
+
+A native Universal app (Apple silicon + Intel, macOS 14+), target `iFrameMac` in the same Xcode project.
+
+```sh
+scripts/build-mac-client.sh   # → dist/iFrame.app and dist/iFrame-<version>-macOS-Universal.zip
+```
+
+It signs with your Apple Development / Developer ID identity if you have one (`security unlock-keychain`
+first over SSH), otherwise ad hoc; `IFRAME_SIGN_IDENTITY=-` forces ad hoc. The app isn't notarized, so on
+another Mac open it once with right-click → **Open** (or System Settings → Privacy & Security → **Open Anyway**).
+
+- **Display:** the host makes a virtual display shaped like the window. Resize the window or go full
+  screen and the remote desktop reshapes to fit, instead of being letterboxed. *More space* / *Most space*
+  trade sharpness for room; *Use the Mac's own display* mirrors the host's screen instead.
+- **Input:** mouse (all buttons), trackpad scrolling 1:1, and the keyboard pass straight through. Key codes are
+  already Mac key codes, so every layout and shortcut works. While the stream has focus, **every** shortcut
+  goes to the remote Mac (⌘Q, ⌘W, ⌘Space…) except ⌃⌥⌘ ones: ⌃⌥⌘F full screen, ⌃⌥⌘S stats,
+  ⌃⌥⌘R refresh, ⌃⌥⌘D disconnect. macOS still keeps ⌘Tab and Mission Control for itself.
+- **Cursor:** the remote Mac's pointer shape becomes this window's real cursor, so it moves with no lag.
+- Don't run it on the host Mac itself against its own virtual display. The window would sit on the display
+  it reshapes.
+- Testing: `open dist/iFrame.app --args -manualHost <addr> -pin <PIN> -autoConnect YES` connects at launch.
 
 ## Client (Linux)
 
@@ -116,7 +141,6 @@ the host PIN. The packaged app includes its runtime. See [Windows controls, test
 
 ## Known limits / next steps
 - **Video isn't encrypted; there's only a PIN.** Use it on a trusted LAN or over Tailscale.
-- **The cursor is part of the video.** A local cursor overlay would make pointing feel instant.
 - **Transport is TCP.** That's fine on a LAN. UDP with FEC would handle lossy networks better.
 - **No audio and no clipboard sync yet.**
 

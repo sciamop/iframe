@@ -1,5 +1,6 @@
 import { Video } from './video.mjs';
 import { attachInput } from './input.mjs';
+import { MacCursor } from './cursor.mjs';
 const $ = id => document.getElementById(id), api = window.iframe;
 let active = false, welcome, rtt = 0, hostStats = {}, frames = 0, decodeTotal = 0;
 const settings = ['host','port','resolution','fps','scale'];
@@ -16,6 +17,8 @@ function saveSettings() {
 async function fail(message) { await api.disconnect(); status(message); }
 const video = new Video($('video'), api, fail, ms => { frames++; decodeTotal += ms; $('waiting').hidden = true; },
   message => { $('waiting').textContent = message; });
+const macCursor = new MacCursor($('video'));
+window.addEventListener('resize', () => macCursor.apply());
 const releaseInput = attachInput($('video'), api, {
   // A Linux host maps keys one-to-one (Ctrl → Ctrl, Windows → Super); the Ctrl/Command swap is for Macs.
   active: () => active, swap: () => $('swap').checked && !linuxHost(),
@@ -62,16 +65,20 @@ api.onState(state => {
     $('host-name').textContent = welcome.hostName;
     $('stream-info').textContent = `${welcome.width} × ${welcome.height} · H.264 · ${welcome.fps} fps`;
     $('keyboard-mode').textContent = linuxHost() ? 'Ctrl → Ctrl · Windows → Super' : $('swap').checked ? 'Ctrl → ⌘ Command' : 'Windows → ⌘ Command';
-    $('pin').value = ''; $('video').focus();
+    $('pin').value = ''; $('video').focus(); macCursor.setWelcome(welcome);
   } else if (!connecting) {
-    releaseInput(); active = false; video.close(); welcome = null; frames = 0; decodeTotal = 0; hostStats = {}; rtt = 0;
+    releaseInput(); active = false; video.close(); macCursor.reset(); welcome = null; frames = 0; decodeTotal = 0; hostStats = {}; rtt = 0;
     $('text-dialog').close('cancel'); $('connect-page').hidden = false; $('stream-page').hidden = true;
     status(state.phase === 'failed' ? state.message : ''); $('connect').focus();
   } else status('Connecting…');
 });
 api.onMessage(({type, data}) => {
   try {
-    if (type === 1) { video.close(); $('waiting').hidden = false; }
+    if (type === 1) {   // also re-sent when the Mac's display is reshaped
+      video.close(); $('waiting').hidden = false;
+      welcome = JSON.parse(new TextDecoder().decode(data)); macCursor.setWelcome(welcome);
+    }
+    else if (type === 8) macCursor.update(data);
     else if (type === 2) video.configure(data);
     else if (type === 3) video.frame(data);
     else if (type === 4) hostStats = JSON.parse(new TextDecoder().decode(data));

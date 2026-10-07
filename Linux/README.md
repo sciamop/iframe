@@ -87,7 +87,8 @@ The window title shows the host, resolution, decoder, fps, bitrate, round trip a
 ### Other options
 
 `--scroll-speed X`, `--invert-scroll`, `--local-cursor` (show the Linux pointer over the stream
-as well; the host's cursor is part of the video), `--view-only` (watch without sending mouse or
+even when the host draws its cursor into the video; a Mac sends its cursor shape instead, which
+becomes the pointer), `--view-only` (watch without sending mouse or
 keyboard), `--no-hw`, `--h264`, `--vsync`, `--stats`.
 
 Colours follow the stream's own YUV matrix: BT.709 from the Mac, BT.601 from NVENC.

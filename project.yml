@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.toddfaulls
   deploymentTarget:
     iOS: "17.0"
+    macOS: "14.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -13,6 +14,7 @@ targets:
     platform: iOS
     sources:
       - path: Client
+      - path: ClientShared
       - path: Shared
     settings:
       base:
@@ -48,3 +50,37 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+  iFrameMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: MacClient
+      - path: ClientShared
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_NAME: iFrame
+        PRODUCT_BUNDLE_IDENTIFIER: com.toddfaulls.iframe.mac
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 6PB44SHJS5
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        # Universal: Apple silicon and Intel in one app.
+        ARCHS: "$(ARCHS_STANDARD)"
+        ONLY_ACTIVE_ARCH: NO
+      configs:
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+    info:
+      path: MacClient/Info.plist
+      properties:
+        CFBundleDisplayName: iFrame
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.utilities
+        NSHumanReadableCopyright: MIT License
+        NSLocalNetworkUsageDescription: iFrame finds and connects to Macs running iframe-host on your network.
+        NSBonjourServices:
+          - _iframe._tcp
