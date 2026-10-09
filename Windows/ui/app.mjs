@@ -9,6 +9,7 @@ try {
   for (const id of settings) if (saved[id] !== undefined) $(id).value = saved[id];
   $('swap').checked = saved.swap !== false;
 } catch { /* Ignore an unreadable preference file. The PIN is never persisted. */ }
+const linuxHost = () => welcome?.os === 'linux';
 const status = message => { $('status').textContent = message; };
 function saveSettings() {
   try { localStorage.setItem('iframe-settings', JSON.stringify(Object.fromEntries([...settings.map(id => [id, $(id).value]), ['swap', $('swap').checked]]))); } catch {}
@@ -19,7 +20,8 @@ const video = new Video($('video'), api, fail, ms => { frames++; decodeTotal += 
 const macCursor = new MacCursor($('video'));
 window.addEventListener('resize', () => macCursor.apply());
 const releaseInput = attachInput($('video'), api, {
-  active: () => active, swap: () => $('swap').checked,
+  // A Linux host maps keys one-to-one (Ctrl → Ctrl, Windows → Super); the Ctrl/Command swap is for Macs.
+  active: () => active, swap: () => $('swap').checked && !linuxHost(),
   shortcut: code => { if (code === 'KeyF') toggleFullscreen(); else if (code === 'KeyQ') disconnect(); else $('fullscreen').focus(); }
 });
 function disconnect() { releaseInput(); return api.disconnect(); }
@@ -62,13 +64,13 @@ api.onState(state => {
     $('waiting').textContent = 'Waiting for the first frame…';
     $('host-name').textContent = welcome.hostName;
     $('stream-info').textContent = `${welcome.width} × ${welcome.height} · H.264 · ${welcome.fps} fps`;
-    $('keyboard-mode').textContent = $('swap').checked ? 'Ctrl → ⌘ Command' : 'Windows → ⌘ Command';
+    $('keyboard-mode').textContent = linuxHost() ? 'Ctrl → Ctrl · Windows → Super' : $('swap').checked ? 'Ctrl → ⌘ Command' : 'Windows → ⌘ Command';
     $('pin').value = ''; $('video').focus(); macCursor.setWelcome(welcome);
   } else if (!connecting) {
     releaseInput(); active = false; video.close(); macCursor.reset(); welcome = null; frames = 0; decodeTotal = 0; hostStats = {}; rtt = 0;
     $('text-dialog').close('cancel'); $('connect-page').hidden = false; $('stream-page').hidden = true;
     status(state.phase === 'failed' ? state.message : ''); $('connect').focus();
-  } else status('Connecting to your Mac…');
+  } else status('Connecting…');
 });
 api.onMessage(({type, data}) => {
   try {
@@ -86,8 +88,8 @@ api.onRtt(value => { rtt = value; });
 let knownHosts = [];
 function showHosts(hosts) {
   knownHosts = hosts; const selected = $('discovered').value;
-  $('discovered').replaceChildren(new Option(hosts.length ? 'Choose a Mac…' : 'No Macs found yet · enter an address below', ''));
-  for (const host of hosts) $('discovered').add(new Option(`${host.name} · ${host.host}`, host.id));
+  $('discovered').replaceChildren(new Option(hosts.length ? 'Choose a computer…' : 'No computers found yet · enter an address below', ''));
+  for (const host of hosts) $('discovered').add(new Option(`${host.name} · ${host.os === 'linux' ? 'Linux' : 'Mac'} · ${host.host}`, host.id));
   $('discovered').value = selected;
 }
 api.onHosts(showHosts); api.hosts().then(showHosts);
@@ -122,7 +124,7 @@ function updateBookmarkButton() {
   $('bookmark').disabled = !a.host || !Number.isInteger(a.port) || a.port < 1 || a.port > 65535;
   $('bookmark').textContent = saved ? '★ Saved' : '☆ Save';
   $('bookmark').setAttribute('aria-pressed', String(saved));
-  $('bookmark').title = saved ? 'Remove this Mac from saved Macs' : 'Save this address';
+  $('bookmark').title = saved ? 'Remove from saved computers' : 'Save this address';
 }
 $('bookmark').onclick = () => {
   const a = address(), i = bookmarkIndex(a);
@@ -135,7 +137,7 @@ showBookmarks();
 setInterval(() => {
   if (active) {
     const n = v => Number.isFinite(v) ? v.toFixed(1) : '—';
-    $('stats').textContent = `${welcome?.isVirtual ? 'Virtual display' : 'Mac display'} · H.264\nReceived    ${frames} fps\nDecode      ${n(frames ? decodeTotal/frames : 0)} ms\nRound trip  ${n(rtt)} ms\nBitrate     ${n(hostStats.mbps)} Mbps\nHost encode ${n(hostStats.encodeMs)} ms\nHost drops  ${hostStats.dropped ?? '—'}`;
+    $('stats').textContent = `${welcome?.isVirtual ? 'Virtual display' : linuxHost() ? 'Linux display' : 'Mac display'} · H.264\nReceived    ${frames} fps\nDecode      ${n(frames ? decodeTotal/frames : 0)} ms\nRound trip  ${n(rtt)} ms\nBitrate     ${n(hostStats.mbps)} Mbps\nHost encode ${n(hostStats.encodeMs)} ms\nHost drops  ${hostStats.dropped ?? '—'}`;
   }
   frames = 0; decodeTotal = 0;
 }, 1000);

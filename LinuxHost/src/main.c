@@ -65,7 +65,7 @@ typedef struct Session {
     pthread_mutex_t send_lock;
     char name[192];
     bool authenticated;
-    bool linux_client;
+    bool pc_client;  // Linux or Windows: its Ctrl, Alt and Super keys map one-to-one
     Capture *cap;
     Encoder *enc;
     Streamer *streamer;
@@ -132,13 +132,13 @@ static bool start_stream(Session *s, bool supports_hevc, int max_fps, bool local
     capture_monitor_origin(s->cap, &ox, &oy);
     pthread_mutex_lock(&input_lock);
     input_set_region(input, ox, oy, w, h);
-    input_set_cmd(input, cfg.cmd != CMD_AUTO ? cfg.cmd : s->linux_client ? CMD_SUPER : CMD_CTRL);
+    input_set_cmd(input, cfg.cmd != CMD_AUTO ? cfg.cmd : s->pc_client ? CMD_SUPER : CMD_CTRL);
     input_keep_awake(input);
     pthread_mutex_unlock(&input_lock);
 
     char name[256], json[512];
     json_escape(host_name, name, sizeof name);
-    // "os" is an addition the iPad app ignores; the Linux client uses it to map keys 1:1.
+    // "os" is an addition the iPad app ignores; the Linux and Windows clients use it to map keys 1:1.
     int n = snprintf(json, sizeof json,
                      "{\"width\":%d,\"height\":%d,\"pointWidth\":%d,\"pointHeight\":%d,\"codec\":%d,\"fps\":%d,"
                      "\"hostName\":\"%s\",\"isVirtual\":false,\"os\":\"linux\"}",
@@ -156,7 +156,7 @@ static bool start_stream(Session *s, bool supports_hevc, int max_fps, bool local
     };
     s->streamer = streamer_start(s->cap, s->enc, sc, session_send, s);
     host_log("streaming %dx%d @ %d fps, %s, start %.0f Mbps, ⌘ → %s, cursor %s", w, h, fps, encoder_name(s->enc), mbps,
-             (cfg.cmd != CMD_AUTO ? cfg.cmd : s->linux_client ? CMD_SUPER : CMD_CTRL) == CMD_CTRL ? "Ctrl" : "Super",
+             (cfg.cmd != CMD_AUTO ? cfg.cmd : s->pc_client ? CMD_SUPER : CMD_CTRL) == CMD_CTRL ? "Ctrl" : "Super",
              local_cursor ? "drawn by the client" : "in the video");
     return true;
 }
@@ -175,7 +175,7 @@ static bool handle_hello(Session *s, const char *j, size_t len) {
     char peer[INET6_ADDRSTRLEN + 8];
     snprintf(peer, sizeof peer, "%.*s", (int)sizeof peer - 1, s->name);  // still just the address
     snprintf(s->name, sizeof s->name, "%s (%s)", name, peer);
-    s->linux_client = strcmp(os, "linux") == 0;
+    s->pc_client = strcmp(os, "linux") == 0 || strcmp(os, "windows") == 0;
 
     pthread_mutex_lock(&server_lock);
     bool ok = (int)version == IFRAME_PROTOCOL_VERSION && constant_time_equals(pin, cfg.pin);
