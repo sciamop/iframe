@@ -1,17 +1,17 @@
 # iFrame for Windows
 
-A Windows 10/11 x64 client for the existing `iframe-host` on your Mac. The portable app includes its runtime; users do not need Node, Python, FFmpeg, or a separate codec installation.
+A Windows 10/11 x64 client for `iframe-host` on a Mac or `iframe-linux-host` on a Linux PC ([LinuxHost](../LinuxHost/README.md)). The portable app includes its runtime; users do not need Node, Python, FFmpeg, or a separate codec installation.
 
 ## Connect
 
-1. Start the Mac host using the instructions in the repository README. Grant its Screen Recording and Accessibility permissions.
+1. Start the host. On a Mac, follow the repository README and grant Screen Recording and Accessibility permissions; on Linux, see [LinuxHost](../LinuxHost/README.md).
 2. Open `iFrame-0.1.0-Windows-x64.exe` from `Windows/dist`.
-3. Choose a nearby Mac, or enter its IP address, Tailscale address, or hostname. The default TCP port is **7878**. Discovery uses mDNS on the local network; manual addresses also work when discovery is unavailable. Select **☆ Save** next to the port to keep an address under **Saved Macs**; select a saved Mac to fill in its address and port.
-4. Enter the host PIN, choose the display size/density, and click **Connect to Mac**.
+3. Choose a nearby computer (marked Mac or Linux), or enter its IP address, Tailscale address, or hostname. The default TCP port is **7878**. Discovery uses mDNS on the local network; manual addresses also work when discovery is unavailable. Select **☆ Save** next to the port to keep an address under **Saved computers**; select a saved computer to fill in its address and port.
+4. Enter the host PIN, choose the display size/density, and click **Connect**.
 
 The app remembers saved Macs, the last address and display settings, but never saves the PIN. Preferences are stored in Electron's per-user app data directory. Windows may ask to allow local network access for discovery. The distributed executable is unsigned.
 
-**Retina** requests a virtual Mac display at the selected pixel size with two pixels per Mac point. **Native** gives more desktop space. **Mirror** uses the Mac's existing display. Display size is chosen at connection time; resizing the app scales the picture without restarting the Mac display. Reconnect to change resolution or density.
+**Retina** requests a virtual Mac display at the selected pixel size with two pixels per Mac point. **Native** gives more desktop space. **Mirror** uses the Mac's existing display. Display size is chosen at connection time; resizing the app scales the picture without restarting the Mac display. Reconnect to change resolution or density. A Linux host streams its monitor as it is, so these settings apply only to Macs.
 
 ## Controls
 
@@ -23,13 +23,14 @@ The app remembers saved Macs, the last address and display settings, but never s
 | Alt | Mac Option |
 | Windows key, fullscreen | Mac Command; the Start menu and Windows+ shortcuts are captured while the stream is fullscreen and focused |
 | Windows key, windowed (default mapping) | Mac Control, when Windows does not intercept it |
+| Linux host | Keys map one-to-one: Ctrl → Ctrl, Alt → Alt, Windows key → Super (fullscreen), so Super opens the desktop's menu; the Ctrl/Command option is ignored |
 | Ctrl+Alt+F | Toggle fullscreen |
 | Ctrl+Alt+R | Release keyboard focus to the toolbar |
 | Ctrl+Alt+Q | Disconnect |
 | Send text | Send pasted or typed Unicode text to the focused Mac field |
 | Refresh | Request a new keyframe |
 
-Disable **Use Ctrl for Mac Command shortcuts** for literal Ctrl → Control and Windows → Command mapping. Windows reserves shortcuts such as Alt+Tab, Windows+L, and Ctrl+Alt+Delete; these stay local. Held keys and mouse buttons are released when focus leaves the desktop. The host also releases input when the connection ends.
+Disable **On a Mac, use Ctrl for Command shortcuts** for literal Ctrl → Control and Windows → Command mapping. Windows reserves shortcuts such as Alt+Tab, Windows+L, and Ctrl+Alt+Delete; these stay local. Held keys and mouse buttons are released when focus leaves the desktop. The host also releases input when the connection ends.
 
 ## Build and test
 

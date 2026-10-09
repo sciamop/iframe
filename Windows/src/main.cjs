@@ -41,16 +41,16 @@ listen('ack', (id, micros) => session.ack(id, micros));
 listen('keyframe', () => session.keyframe());
 function startDiscovery() {
   try {
-    discovery = new Bonjour({}, () => emit('discovery-warning', 'Discovery is unavailable. Enter the Mac address below.'));
+    discovery = new Bonjour({}, () => emit('discovery-warning', 'Discovery is unavailable. Enter the host address below.'));
     browser = discovery.find({ type: 'iframe', protocol: 'tcp' });
     browser.on('up', service => {
       const host = service.addresses?.find(a => /^\d+\.\d+\.\d+\.\d+$/.test(a)) ?? service.host;
       if (!host) return;
-      hosts.set(service.fqdn, { id: service.fqdn, name: service.name, host, port: service.port });
+      hosts.set(service.fqdn, { id: service.fqdn, name: service.name, host, port: service.port, os: service.txt?.os === 'linux' ? 'linux' : 'mac' });
       emit('hosts', [...hosts.values()]);
     });
     browser.on('down', service => { hosts.delete(service.fqdn); emit('hosts', [...hosts.values()]); });
-  } catch { emit('discovery-warning', 'Discovery is unavailable. Enter the Mac address below.'); }
+  } catch { emit('discovery-warning', 'Discovery is unavailable. Enter the host address below.'); }
 }
 app.whenReady().then(async () => {
   window = new BrowserWindow({ width: 1180, height: 820, minWidth: 760, minHeight: 620, show: !smoke,
