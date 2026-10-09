@@ -46,7 +46,7 @@ function startDiscovery() {
     browser.on('up', service => {
       const host = service.addresses?.find(a => /^\d+\.\d+\.\d+\.\d+$/.test(a)) ?? service.host;
       if (!host) return;
-      hosts.set(service.fqdn, { id: service.fqdn, name: service.name, host, port: service.port, os: service.txt?.os === 'linux' ? 'linux' : 'mac' });
+      hosts.set(service.fqdn, { id: service.fqdn, name: service.name, host, port: service.port, os: ['linux', 'windows'].includes(service.txt?.os) ? service.txt.os : 'mac' });
       emit('hosts', [...hosts.values()]);
     });
     browser.on('down', service => { hosts.delete(service.fqdn); emit('hosts', [...hosts.values()]); });

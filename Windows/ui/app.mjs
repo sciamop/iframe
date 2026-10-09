@@ -9,7 +9,9 @@ try {
   for (const id of settings) if (saved[id] !== undefined) $(id).value = saved[id];
   $('swap').checked = saved.swap !== false;
 } catch { /* Ignore an unreadable preference file. The PIN is never persisted. */ }
-const linuxHost = () => welcome?.os === 'linux';
+// Linux and Windows hosts map keys one-to-one; Mac hosts don't send "os".
+const pcHost = () => welcome?.os === 'linux' || welcome?.os === 'windows';
+const osName = os => os === 'linux' ? 'Linux' : os === 'windows' ? 'Windows' : 'Mac';
 const status = message => { $('status').textContent = message; };
 function saveSettings() {
   try { localStorage.setItem('iframe-settings', JSON.stringify(Object.fromEntries([...settings.map(id => [id, $(id).value]), ['swap', $('swap').checked]]))); } catch {}
@@ -20,8 +22,9 @@ const video = new Video($('video'), api, fail, ms => { frames++; decodeTotal += 
 const macCursor = new MacCursor($('video'));
 window.addEventListener('resize', () => macCursor.apply());
 const releaseInput = attachInput($('video'), api, {
-  // A Linux host maps keys one-to-one (Ctrl → Ctrl, Windows → Super); the Ctrl/Command swap is for Macs.
-  active: () => active, swap: () => $('swap').checked && !linuxHost(),
+  // Linux and Windows hosts map keys one-to-one (Ctrl → Ctrl, Windows → Super or Windows); the
+  // Ctrl/Command swap is for Macs.
+  active: () => active, swap: () => $('swap').checked && !pcHost(),
   shortcut: code => { if (code === 'KeyF') toggleFullscreen(); else if (code === 'KeyQ') disconnect(); else $('fullscreen').focus(); }
 });
 function disconnect() { releaseInput(); return api.disconnect(); }
@@ -64,7 +67,8 @@ api.onState(state => {
     $('waiting').textContent = 'Waiting for the first frame…';
     $('host-name').textContent = welcome.hostName;
     $('stream-info').textContent = `${welcome.width} × ${welcome.height} · H.264 · ${welcome.fps} fps`;
-    $('keyboard-mode').textContent = linuxHost() ? 'Ctrl → Ctrl · Windows → Super' : $('swap').checked ? 'Ctrl → ⌘ Command' : 'Windows → ⌘ Command';
+    $('keyboard-mode').textContent = welcome.os === 'linux' ? 'Ctrl → Ctrl · Windows → Super'
+      : welcome.os === 'windows' ? 'Ctrl → Ctrl · Windows → Windows' : $('swap').checked ? 'Ctrl → ⌘ Command' : 'Windows → ⌘ Command';
     $('pin').value = ''; $('video').focus(); macCursor.setWelcome(welcome);
   } else if (!connecting) {
     releaseInput(); active = false; video.close(); macCursor.reset(); welcome = null; frames = 0; decodeTotal = 0; hostStats = {}; rtt = 0;
@@ -89,7 +93,7 @@ let knownHosts = [];
 function showHosts(hosts) {
   knownHosts = hosts; const selected = $('discovered').value;
   $('discovered').replaceChildren(new Option(hosts.length ? 'Choose a computer…' : 'No computers found yet · enter an address below', ''));
-  for (const host of hosts) $('discovered').add(new Option(`${host.name} · ${host.os === 'linux' ? 'Linux' : 'Mac'} · ${host.host}`, host.id));
+  for (const host of hosts) $('discovered').add(new Option(`${host.name} · ${osName(host.os)} · ${host.host}`, host.id));
   $('discovered').value = selected;
 }
 api.onHosts(showHosts); api.hosts().then(showHosts);
@@ -137,7 +141,7 @@ showBookmarks();
 setInterval(() => {
   if (active) {
     const n = v => Number.isFinite(v) ? v.toFixed(1) : '—';
-    $('stats').textContent = `${welcome?.isVirtual ? 'Virtual display' : linuxHost() ? 'Linux display' : 'Mac display'} · H.264\nReceived    ${frames} fps\nDecode      ${n(frames ? decodeTotal/frames : 0)} ms\nRound trip  ${n(rtt)} ms\nBitrate     ${n(hostStats.mbps)} Mbps\nHost encode ${n(hostStats.encodeMs)} ms\nHost drops  ${hostStats.dropped ?? '—'}`;
+    $('stats').textContent = `${welcome?.isVirtual ? 'Virtual display' : `${osName(welcome?.os)} display`} · H.264\nReceived    ${frames} fps\nDecode      ${n(frames ? decodeTotal/frames : 0)} ms\nRound trip  ${n(rtt)} ms\nBitrate     ${n(hostStats.mbps)} Mbps\nHost encode ${n(hostStats.encodeMs)} ms\nHost drops  ${hostStats.dropped ?? '—'}`;
   }
   frames = 0; decodeTotal = 0;
 }, 1000);

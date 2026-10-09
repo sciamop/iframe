@@ -261,7 +261,7 @@ static void handle_welcome(const uint8_t *p, uint32_t len) {
     json_bool(j, len, "isVirtual", &w.is_virtual);
     char os[32] = "";
     json_string(j, len, "os", os, sizeof os);
-    w.is_linux = strcmp(os, "linux") == 0;
+    w.pc_host = strcmp(os, "linux") == 0 || strcmp(os, "windows") == 0;
     SDL_LockMutex(state_lock);
     welcome = w;
     have_welcome = true;
@@ -483,7 +483,7 @@ static SDL_YUV_CONVERSION_MODE tex_yuv_mode = SDL_YUV_CONVERSION_BT709;
 static AVFrame *shown_frame;
 static bool have_picture;
 static bool keyboard_grab;
-static bool welcome_is_linux;
+static bool welcome_pc_host;
 
 static bool mac_keys_down[128];
 static uint32_t buttons_down;
@@ -507,8 +507,9 @@ static void normalized(int x, int y, float *nx, float *ny) {
 }
 
 static int remap_usage(int usage) {
-    // A Linux host maps ⌘ back to Super, so every key lands where it is on this keyboard.
-    if (!opt.cmd_key_given && welcome_is_linux) return usage;
+    // A Linux or Windows host maps ⌘ back to Super (the Windows key), so every key lands where
+    // it is on this keyboard.
+    if (!opt.cmd_key_given && welcome_pc_host) return usage;
     // HID: 0xE0 lctrl, 0xE2 lalt, 0xE3 lgui; 0xE4 rctrl, 0xE6 ralt, 0xE7 rgui. The table maps
     // gui -> command and alt -> option, so remapping is a swap.
     int left = opt.cmd_key == CMD_ALT ? 0xE2 : opt.cmd_key == CMD_CTRL ? 0xE0 : 0xE3;
@@ -778,7 +779,7 @@ static void usage(FILE *f) {
             "                         2 = Retina-sharp, 1.33 / 1.6 in between, 0 = stream the Mac's own display\n"
             "  -w, --window WxH       start in a window (default: fullscreen); the Mac display follows its size\n"
             "      --cmd-key KEY      which key is ⌘ on a Mac: alt (default), super, or ctrl\n"
-            "                         (on a Linux host every key maps 1:1 unless this is given)\n"
+            "                         (on a Linux or Windows host every key maps 1:1 unless this is given)\n"
             "      --scroll-speed X   wheel multiplier (default 1)\n"
             "      --invert-scroll    reverse wheel direction\n"
             "      --local-cursor     show the Linux pointer even when the host draws the cursor into the\n"
@@ -974,7 +975,7 @@ int main(int argc, char **argv) {
             } else if (e.type == EV_WELCOME) {
                 SDL_LockMutex(state_lock);
                 bool connected = have_welcome;
-                welcome_is_linux = welcome.is_linux;
+                welcome_pc_host = welcome.pc_host;
                 SDL_UnlockMutex(state_lock);
                 if (connected && !saved) {
                     save_config();

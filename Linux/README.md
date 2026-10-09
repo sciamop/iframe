@@ -68,9 +68,10 @@ modifier then becomes ⌥:
 
 In fullscreen the client grabs the keyboard, so Alt+Tab, Super and friends go to the Mac.
 
-**On a Linux host** (`iframe-linux-host`), every key maps 1:1: Ctrl, Alt and Super arrive as
-themselves. The host says it's Linux in its welcome message, and the client then stops mapping
-Alt to ⌘. Passing `--cmd-key` explicitly keeps your mapping.
+**On a Linux or Windows host** (`iframe-linux-host`, `iframe-windows-host`), every key maps
+1:1: Ctrl, Alt and Super (the Windows key) arrive as themselves. The host says which it is in its
+welcome message, and the client then stops mapping Alt to ⌘. Passing `--cmd-key` explicitly keeps
+your mapping.
 
 **Hotkeys** (always local, never sent): Ctrl+Alt+Shift plus
 
