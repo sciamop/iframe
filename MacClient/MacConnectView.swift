@@ -11,6 +11,7 @@ struct MacConnectView: View {
     @AppStorage("pin") private var pin = ""
     @AppStorage("manualHost") private var manualHost = ""
     @AppStorage("macDensity") private var density = MacDensity.match.rawValue
+    @AppStorage("fullScreenStream") private var fullScreen = true
     @AppStorage("lastHostName") private var lastHostName = ""
     @AppStorage("savedHosts") private var savedHostsJSON = "[]"
     @State private var pendingSave: SavedHost?
@@ -176,6 +177,9 @@ struct MacConnectView: View {
                      : "Shows the Mac's own screen, scaled to fit this window.")
                     .font(.system(size: 11))
                     .foregroundColor(Color(nsColor: .tertiaryLabelColor))
+                Toggle("Open the stream full screen", isOn: $fullScreen)
+                    .font(.system(size: 13))
+                    .padding(.top, 4)
             }
 
             FrameInputField(label: "Or connect by address (optional):",
