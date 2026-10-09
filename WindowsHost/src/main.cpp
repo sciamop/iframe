@@ -347,6 +347,25 @@ static void pin_path(char *out, size_t cap) {
     }
 }
 
+/// iframe-windows-hostw.exe (the login task) has no console: its output goes to
+/// %LOCALAPPDATA%\iframe\windows-host.log, which keeps one older copy past 4 MB.
+static void log_to_file_without_console(void) {
+    if (GetStdHandle(STD_OUTPUT_HANDLE)) return;  // a console, or redirected by whoever started us
+    wchar_t *local = NULL;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, NULL, &local))) return;
+    wchar_t dir[MAX_PATH], path[MAX_PATH], old[MAX_PATH];
+    swprintf(dir, MAX_PATH, L"%ls\\iframe", local);
+    swprintf(path, MAX_PATH, L"%ls\\windows-host.log", dir);
+    swprintf(old, MAX_PATH, L"%ls\\windows-host.old.log", dir);
+    CoTaskMemFree(local);
+    CreateDirectoryW(dir, NULL);
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    if (GetFileAttributesExW(path, GetFileExInfoStandard, &info) && (info.nFileSizeHigh || info.nFileSizeLow > (4u << 20)))
+        MoveFileExW(path, old, MOVEFILE_REPLACE_EXISTING);
+    FILE *f = _wfreopen(path, L"a", stdout);
+    if (f) _wfreopen(path, L"a", stderr);
+}
+
 static void load_pin(void) {
     if (cfg.pin[0]) return;
     char path[MAX_PATH * 2];
@@ -416,6 +435,7 @@ static BOOL WINAPI on_console_event(DWORD type) {
 }
 
 int main(int argc, char **argv) {
+    log_to_file_without_console();
     SetConsoleOutputCP(CP_UTF8);
     // Physical pixels everywhere: capture, input and the monitor list.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);

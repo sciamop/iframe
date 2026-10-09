@@ -106,6 +106,18 @@ LinuxHost/install.sh     # build, install, enable iframe-linux-host.service; pri
 
 See [LinuxHost/README.md](LinuxHost/README.md).
 
+## Host (Windows)
+
+`WindowsHost/` is a separate host for Windows 10/11 desktops (Desktop Duplication + the GPU's
+hardware encoder through Media Foundation), in C++. Like the Linux host, it has its own binary
+(`iframe-windows-host`), login task and PIN file, and every client connects to it unchanged.
+
+```powershell
+WindowsHost\install.ps1   # build, install, start at login, allow through the firewall; prints the PIN
+```
+
+See [WindowsHost/README.md](WindowsHost/README.md).
+
 ### Controls (iPad)
 | Input | Action |
 |---|---|

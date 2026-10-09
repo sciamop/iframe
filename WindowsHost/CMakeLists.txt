@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")  # no VC++ redistributable needed
 
-add_executable(iframe-windows-host
+add_library(host OBJECT
     src/main.cpp
     src/net.cpp
     src/capture.cpp
@@ -19,8 +19,17 @@ add_executable(iframe-windows-host
     ../Linux/src/json.c
     ../Linux/src/keymap.c
 )
-target_compile_definitions(iframe-windows-host PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_RAND_S UNICODE _UNICODE
+target_compile_definitions(host PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_RAND_S UNICODE _UNICODE
     _WIN32_WINNT=0x0A00 WINVER=0x0A00)
-target_compile_options(iframe-windows-host PRIVATE /utf-8 /W3 /wd4244)
-target_link_libraries(iframe-windows-host PRIVATE ws2_32 iphlpapi dnsapi dxgi d3d11 shell32 ole32 mfplat mfuuid
-    windowscodecs strmiids)
+target_compile_options(host PRIVATE /utf-8 /W3 /wd4244)
+set(LIBS ws2_32 iphlpapi dnsapi dxgi d3d11 shell32 ole32 mfplat mfuuid windowscodecs strmiids)
+
+# The console program, for running by hand.
+add_executable(iframe-windows-host $<TARGET_OBJECTS:host>)
+target_link_libraries(iframe-windows-host PRIVATE ${LIBS})
+
+# The same program without a console window, for the login task; it logs to
+# %LOCALAPPDATA%\iframe\windows-host.log.
+add_executable(iframe-windows-hostw WIN32 $<TARGET_OBJECTS:host>)
+target_link_libraries(iframe-windows-hostw PRIVATE ${LIBS})
+target_link_options(iframe-windows-hostw PRIVATE /ENTRY:mainCRTStartup)
