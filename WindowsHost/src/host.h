@@ -84,6 +84,25 @@ void encoder_set_bitrate(Encoder *e, int bitrate);
 bool encoder_encode(Encoder *e, ID3D11Texture2D *bgra, bool keyframe, FormatFn on_format, FrameFn on_frame,
                     void *ctx);
 
+// input.cpp — SendInput injection. Keys go in by scan code, so they land by position whatever the
+// keyboard layout. Windows won't let it type into elevated windows unless the host runs elevated.
+enum CmdMode { CMD_AUTO, CMD_CTRL, CMD_WIN };
+struct Input;
+Input *input_open(void);
+void input_close(Input *in);
+// Monitor rectangle in virtual-desktop pixels that normalized positions map onto.
+void input_set_region(Input *in, RECT region);
+// What ⌘ becomes. Mac users (iPad, Mac) expect ⌘C to copy, so CTRL; Windows and Linux clients
+// send their own Windows/Super key as ⌘, so WIN.
+void input_set_cmd(Input *in, enum CmdMode mode);
+void input_move(Input *in, float x, float y);
+void input_button(Input *in, int button, bool down, float x, float y);
+void input_scroll(Input *in, float dx, float dy);
+void input_key(Input *in, int mac_code, int action, uint32_t mods);
+void input_text(Input *in, const char *utf8, size_t len);
+void input_release_all(Input *in);
+void input_keep_awake(Input *in);
+
 // streamer.cpp — capture → encode → send, with ack-based flow control, idle refinement and
 // adaptive bitrate (same design as Host/Streamer.swift and LinuxHost/src/streamer.c).
 struct Streamer;

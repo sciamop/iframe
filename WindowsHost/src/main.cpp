@@ -23,6 +23,7 @@ static struct {
     int monitor = -1;            // -1 = primary
     int max_inflight = 3;
     char pin[64] = "";
+    enum CmdMode cmd = CMD_AUTO;
     bool publish = true;
 } cfg;
 
@@ -65,6 +66,8 @@ static Session *sessions[64];            // every live connection, so shutdown c
 static int session_count;
 static int failed_attempts;
 static char host_name[128] = "Windows";
+static Input *input;                     // shared; only the active session drives it
+static SRWLOCK input_lock = SRWLOCK_INIT;
 
 static void session_send(void *ctx, uint8_t type, const uint8_t *payload, uint32_t len) {
     Session *s = (Session *)ctx;
@@ -115,6 +118,13 @@ static bool start_stream(Session *s, bool supports_hevc, int max_fps, bool local
         return false;
     }
 
+    enum CmdMode cmd = cfg.cmd != CMD_AUTO ? cfg.cmd : s->pc_client ? CMD_WIN : CMD_CTRL;
+    AcquireSRWLockExclusive(&input_lock);
+    input_set_region(input, capture_monitor_rect(s->cap));
+    input_set_cmd(input, cmd);
+    input_keep_awake(input);
+    ReleaseSRWLockExclusive(&input_lock);
+
     char name[256], json[512];
     json_escape(host_name, name, sizeof name);
     // "os" is an addition the iPad and Mac apps ignore; the Windows and Linux clients use it to map keys 1:1.
@@ -134,7 +144,7 @@ static bool start_stream(Session *s, bool supports_hevc, int max_fps, bool local
     sc.local_cursor = local_cursor;
     s->streamer = streamer_start(s->cap, s->enc, sc, session_send, s);
     host_log("streaming %dx%d @ %d fps on %s, %s, start %.0f Mbps, ⌘ → %s, cursor %s", w, h, fps,
-             capture_adapter_name(s->cap), encoder_name(s->enc), mbps, s->pc_client ? "Windows key" : "Ctrl",
+             capture_adapter_name(s->cap), encoder_name(s->enc), mbps, cmd == CMD_WIN ? "Windows key" : "Ctrl",
              local_cursor ? "drawn by the client" : "not shown (this client can't draw it)");
     return true;
 }
@@ -182,7 +192,14 @@ static bool handle_hello(Session *s, const char *j, size_t len) {
     return start_stream(s, hevc, (int)max_fps, local_cursor);
 }
 
-static void handle_message(Session *s, uint8_t type, const uint8_t *p, uint32_t len) {
+static bool is_active(Session *s) {
+    AcquireSRWLockShared(&server_lock);
+    bool yes = active == s;
+    ReleaseSRWLockShared(&server_lock);
+    return yes;
+}
+
+static void handle_message(Session *s, uint8_t type, const uint8_t *p, uint32_t len, uint64_t *last_awake) {
     if (type == MSG_ACK) {
         if (len >= 4 && s->streamer) streamer_ack(s->streamer, get_u32(p));
         return;
@@ -193,18 +210,48 @@ static void handle_message(Session *s, uint8_t type, const uint8_t *p, uint32_t 
     }
     if (type == MSG_PING) {
         session_send(s, MSG_PONG, p, len);
+        uint64_t now = now_nanos();
+        if (now - *last_awake > 30000000000ull && is_active(s)) {
+            *last_awake = now;
+            AcquireSRWLockExclusive(&input_lock);
+            input_keep_awake(input);
+            ReleaseSRWLockExclusive(&input_lock);
+        }
         return;
     }
     if (type == MSG_DISPLAY) {
         host_log("%s asked for a %.*s display; streaming the existing monitor", s->name, (int)len, (const char *)p);
         return;
     }
+    if (!is_active(s)) return;
+    AcquireSRWLockExclusive(&input_lock);
+    switch (type) {
+    case MSG_MOUSE_MOVE:
+        if (len >= 8) input_move(input, get_f32(p), get_f32(p + 4));
+        break;
+    case MSG_MOUSE_BUTTON:
+        if (len >= 10) input_button(input, p[0], p[1] != 0, get_f32(p + 2), get_f32(p + 6));
+        break;
+    case MSG_SCROLL:
+        if (len >= 8) input_scroll(input, get_f32(p), get_f32(p + 4));
+        break;
+    case MSG_KEY:
+        if (len >= 7) input_key(input, p[0] << 8 | p[1], p[2], get_u32(p + 3));
+        break;
+    case MSG_TEXT:
+        input_text(input, (const char *)p, len);
+        break;
+    default:
+        break;
+    }
+    ReleaseSRWLockExclusive(&input_lock);
 }
 
 static DWORD WINAPI session_thread(void *arg) {
     Session *s = (Session *)arg;
     uint8_t *body = NULL;
     size_t cap = 0;
+    uint64_t last_awake = now_nanos();
     for (;;) {
         uint8_t header[5];
         if (!net_read_full(s->fd, header, 5)) break;
@@ -220,7 +267,7 @@ static DWORD WINAPI session_thread(void *arg) {
             if (header[0] != MSG_HELLO || !handle_hello(s, (const char *)body, len)) break;
             continue;
         }
-        handle_message(s, header[0], body, len);
+        handle_message(s, header[0], body, len, &last_awake);
     }
 
     streamer_stop(s->streamer);
@@ -228,7 +275,15 @@ static DWORD WINAPI session_thread(void *arg) {
     capture_close(s->cap);
     if (s->authenticated) host_log("%s disconnected", s->name);
     AcquireSRWLockExclusive(&server_lock);
-    if (active == s) active = NULL;
+    bool was_active = active == s;
+    if (was_active) active = NULL;
+    ReleaseSRWLockExclusive(&server_lock);
+    if (was_active) {
+        AcquireSRWLockExclusive(&input_lock);
+        input_release_all(input);
+        ReleaseSRWLockExclusive(&input_lock);
+    }
+    AcquireSRWLockExclusive(&server_lock);
     closesocket(s->fd);
     for (int i = 0; i < session_count; i++)
         if (sessions[i] == s) sessions[i] = sessions[--session_count];
@@ -342,6 +397,8 @@ static void usage(FILE *f) {
             "  --list            list monitors and the GPU driving each, then exit\n"
             "  --inflight <n>    max unacknowledged frames before skipping (default 3)\n"
             "  --pin <digits>    PIN (default: %s, else random each launch)\n"
+            "  --cmd-key <k>     what ⌘ becomes: auto (default: Ctrl for the iPad and Mac, the Windows key\n"
+            "                    for Windows and Linux clients, which send their own Ctrl as ⌃), ctrl, or win\n"
             "  --no-publish      don't advertise over Bonjour\n",
             IFRAME_DEFAULT_PORT, path);
 }
@@ -380,6 +437,10 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--monitor") && has) cfg.monitor = atoi(argv[++i]);
         else if (!strcmp(a, "--inflight") && has) cfg.max_inflight = atoi(argv[++i]) > 0 ? atoi(argv[i]) : 1;
         else if (!strcmp(a, "--pin") && has) snprintf(cfg.pin, sizeof cfg.pin, "%s", argv[++i]);
+        else if (!strcmp(a, "--cmd-key") && has) {
+            v = argv[++i];
+            cfg.cmd = !strcmp(v, "ctrl") ? CMD_CTRL : !strcmp(v, "win") || !strcmp(v, "super") ? CMD_WIN : CMD_AUTO;
+        }
         else { usage(stderr); return 64; }
     }
     load_pin();
@@ -394,6 +455,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     capture_close(probe);
+    input = input_open();
 
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
@@ -458,5 +520,8 @@ int main(int argc, char **argv) {
     while (session_count > 0 && GetTickCount64() < deadline)
         SleepConditionVariableSRW(&sessions_done, &server_lock, (DWORD)(deadline - GetTickCount64()), 0);
     ReleaseSRWLockExclusive(&server_lock);
+    AcquireSRWLockExclusive(&input_lock);
+    input_release_all(input);
+    ReleaseSRWLockExclusive(&input_lock);
     return 0;
 }

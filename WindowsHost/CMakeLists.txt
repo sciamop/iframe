@@ -14,6 +14,7 @@ add_executable(iframe-windows-host
     src/capture.cpp
     src/encoder.cpp
     src/streamer.cpp
+    src/input.cpp
     # Protocol helpers shared with the Linux client (JSON, key table).
     ../Linux/src/json.c
     ../Linux/src/keymap.c
