@@ -98,7 +98,7 @@ static bool constant_time_equals(const char *a, const char *b) {
     return diff == 0;
 }
 
-static bool start_stream(Session *s, bool supports_hevc, int max_fps) {
+static bool start_stream(Session *s, bool supports_hevc, int max_fps, bool local_cursor) {
     char err[256];
     s->cap = capture_open(cfg.display, cfg.monitor, err, sizeof err);
     if (!s->cap) {
@@ -152,23 +152,26 @@ static bool start_stream(Session *s, bool supports_hevc, int max_fps) {
         .max_bitrate = (int)(mbps * 1.5e6),
         .max_inflight = cfg.max_inflight,
         .codec = codec,
+        .local_cursor = local_cursor,
     };
     s->streamer = streamer_start(s->cap, s->enc, sc, session_send, s);
-    host_log("streaming %dx%d @ %d fps, %s, start %.0f Mbps, ⌘ → %s", w, h, fps, encoder_name(s->enc), mbps,
-             (cfg.cmd != CMD_AUTO ? cfg.cmd : s->pc_client ? CMD_SUPER : CMD_CTRL) == CMD_CTRL ? "Ctrl" : "Super");
+    host_log("streaming %dx%d @ %d fps, %s, start %.0f Mbps, ⌘ → %s, cursor %s", w, h, fps, encoder_name(s->enc), mbps,
+             (cfg.cmd != CMD_AUTO ? cfg.cmd : s->pc_client ? CMD_SUPER : CMD_CTRL) == CMD_CTRL ? "Ctrl" : "Super",
+             local_cursor ? "drawn by the client" : "in the video");
     return true;
 }
 
 static bool handle_hello(Session *s, const char *j, size_t len) {
     double version = 0, max_fps = 0;
     char pin[128] = "", name[96] = "client", os[32] = "";
-    bool hevc = false;
+    bool hevc = false, local_cursor = false;
     json_number(j, len, "version", &version);
     json_string(j, len, "pin", pin, sizeof pin);
     json_string(j, len, "name", name, sizeof name);
     json_string(j, len, "os", os, sizeof os);
     json_bool(j, len, "supportsHEVC", &hevc);
     json_number(j, len, "maxFPS", &max_fps);
+    json_bool(j, len, "localCursor", &local_cursor);
     char peer[INET6_ADDRSTRLEN + 8];
     snprintf(peer, sizeof peer, "%.*s", (int)sizeof peer - 1, s->name);  // still just the address
     snprintf(s->name, sizeof s->name, "%s (%s)", name, peer);
@@ -198,7 +201,7 @@ static bool handle_hello(Session *s, const char *j, size_t len) {
     }
     s->authenticated = true;
     host_log("%s connected", s->name);
-    return start_stream(s, hevc, (int)max_fps);
+    return start_stream(s, hevc, (int)max_fps, local_cursor);
 }
 
 static bool is_active(Session *s) {

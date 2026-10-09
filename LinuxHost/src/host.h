@@ -14,7 +14,8 @@
 void host_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 // capture.c — one X11 monitor via XShm, with change detection (XDamage) and the cursor
-// composited in (XFixes), since X never puts it in the framebuffer.
+// composited in (XFixes), since X never puts it in the framebuffer — unless the client draws
+// the pointer itself, in which case the shape goes out as a PNG instead.
 typedef struct Capture Capture;
 Capture *capture_open(const char *display, int monitor, char *err, size_t err_cap);
 void capture_close(Capture *c);
@@ -26,6 +27,15 @@ bool capture_poll_changes(Capture *c);       // drains X events + checks the poi
 bool capture_grab(Capture *c);               // grabs the screen into the BGRX buffer
 const uint8_t *capture_pixels(Capture *c, int *stride);
 void capture_monitor_origin(Capture *c, int *x, int *y);
+// Leaves the cursor out of the frames, and pointer motion no longer counts as a screen change.
+void capture_set_local_cursor(Capture *c, bool on);
+typedef struct {
+    uint8_t *png;                    // caller frees
+    size_t png_len;
+    int width, height, hot_x, hot_y; // in points, which on this host are pixels
+} CursorImage;
+// True (and fills `shape`) when the cursor's shape changed since the last call.
+bool capture_cursor_shape(Capture *c, CursorImage *shape);
 
 // encoder.c — NVENC through libavcodec, fed BGRX directly (NVENC converts on the GPU).
 typedef struct Encoder Encoder;
@@ -67,6 +77,7 @@ typedef struct {
     int bitrate, min_bitrate, max_bitrate;
     int max_inflight;
     int codec;
+    bool local_cursor;               // send MSG_CURSOR shapes; the client draws the pointer
 } StreamConfig;
 typedef void (*SendFn)(void *ctx, uint8_t type, const uint8_t *payload, uint32_t len);
 Streamer *streamer_start(Capture *cap, Encoder *enc, StreamConfig cfg, SendFn send, void *ctx);

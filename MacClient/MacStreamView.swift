@@ -82,6 +82,7 @@ final class StreamNSView: NSView {
         releaseAll()
     }
 
+
     // MARK: Geometry
 
     private var videoRect: CGRect {
@@ -132,10 +133,10 @@ final class StreamNSView: NSView {
     private func scheduleDisplayRequest(force: Bool = false) {
         guard let welcome, welcome.isVirtual else { return }
         if requestedPixels == nil {
-            // The stream we connected with already matches; only react to changes from here on.
-            requestedPixels = targetPixels
-            requestedScale = targetScale
-            if !force { return }
+            // Start from what the host actually made, so a window that changed size while
+            // connecting (or went full screen) still gets a matching display.
+            requestedPixels = CGSize(width: welcome.width, height: welcome.height)
+            requestedScale = force ? nil : targetScale
         }
         pendingRequest?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.sendDisplayRequest() }

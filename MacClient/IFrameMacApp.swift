@@ -96,17 +96,27 @@ final class MainWindow: ObservableObject {
     /// Content size (points) the stream will use, decided when connecting.
     private var streamSize: CGSize?
     private var connectFrame: NSRect?
+    /// Go full screen when the stream starts, and leave it again when it ends.
+    private var enterFullScreen = false
+    private var enteredFullScreen = false
 
     var backingScale: CGFloat { window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2 }
     var maxFPS: Int { (window?.screen ?? NSScreen.main)?.maximumFramesPerSecond ?? 60 }
 
     /// Picks the window size for streaming and returns it in pixels for the host's virtual display.
-    func prepareStream() -> CGSize {
+    /// With `fullScreen`, the stream takes the whole screen, so the Mac's desktop matches it.
+    func prepareStream(fullScreen: Bool) -> CGSize {
+        let screen = window?.screen ?? NSScreen.main
         let size: CGSize
         if let window, window.styleMask.contains(.fullScreen) {
             size = window.contentLayoutRect.size
+            enterFullScreen = false
+        } else if fullScreen, let screen {
+            // Full screen windows sit below the notch on Macs that have one.
+            size = CGSize(width: screen.frame.width, height: screen.frame.height - screen.safeAreaInsets.top)
+            enterFullScreen = true
         } else {
-            let visible = (window?.screen ?? NSScreen.main)?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
+            let visible = screen?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
             let titleBar = chrome.height
             let saved = CGSize(width: UserDefaults.standard.double(forKey: "streamWidth"),
                                height: UserDefaults.standard.double(forKey: "streamHeight"))
@@ -115,6 +125,7 @@ final class MainWindow: ObservableObject {
                 : CGSize(width: visible.width * 0.85, height: visible.height * 0.85 - titleBar)
             size = CGSize(width: min(wanted.width, visible.width).rounded(),
                           height: min(wanted.height, visible.height - titleBar).rounded())
+            enterFullScreen = false
         }
         streamSize = size
         return CGSize(width: size.width * backingScale, height: size.height * backingScale)
@@ -126,12 +137,24 @@ final class MainWindow: ObservableObject {
         if phase == .streaming, old != .streaming {
             window.contentMinSize = CGSize(width: 640, height: 480)
             window.title = session.welcome?.hostName ?? session.hostLabel
-            guard !fullScreen, let size = streamSize else { return }
+            guard !fullScreen else { return }
             connectFrame = window.frame
-            setContentSize(size, centered: true)
+            if enterFullScreen {
+                enteredFullScreen = true
+                window.toggleFullScreen(nil)
+            } else if let size = streamSize {
+                setContentSize(size, centered: true)
+            }
         } else if old == .streaming, phase != .streaming {
             window.title = "iFrame"
             window.contentMinSize = CGSize(width: 420, height: 520)
+            if fullScreen, enteredFullScreen {
+                // Leaving full screen restores the connect window's frame.
+                enteredFullScreen = false
+                window.toggleFullScreen(nil)
+                return
+            }
+            enteredFullScreen = false
             guard !fullScreen else { return }
             let content = window.contentLayoutRect.size
             UserDefaults.standard.set(content.width, forKey: "streamWidth")
@@ -204,7 +227,7 @@ private struct WindowReader: NSViewRepresentable {
 
 extension StreamSession {
     func connect(to endpoint: NWEndpoint, pin: String, label: String, window: MainWindow, density: MacDensity) {
-        let pixels = window.prepareStream()
+        let pixels = window.prepareStream(fullScreen: UserDefaults.standard.object(forKey: "fullScreenStream") as? Bool ?? true)
         connect(to: endpoint, pin: pin, label: label,
                 deviceName: Host.current().localizedName ?? "Mac",
                 maxFPS: window.maxFPS, pixels: pixels,

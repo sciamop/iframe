@@ -620,9 +620,9 @@ static void render(void) {
 
 static SDL_Cursor *shown_cursor;
 
-/// Shows the Mac's cursor shape as our own pointer, sized to how big the Mac's screen appears
-/// in the window. Without a shape from the host (older host, Linux host, or not connected) the
-/// pointer stays hidden, because the cursor is in the video.
+/// Shows the host's cursor shape as our own pointer, sized to how big the host's screen appears
+/// in the window. Without a shape from the host (older host, or not connected) the pointer stays
+/// hidden, because the cursor is in the video.
 static void apply_cursor(void) {
     SDL_LockMutex(state_lock);
     double point_w = have_welcome && welcome.width > 0 ? welcome.point_width : 0;
@@ -782,7 +782,7 @@ static void usage(FILE *f) {
             "      --scroll-speed X   wheel multiplier (default 1)\n"
             "      --invert-scroll    reverse wheel direction\n"
             "      --local-cursor     show the Linux pointer even when the host draws the cursor into the\n"
-            "                         video (Macs send their cursor shape and don't need this)\n"
+            "                         video (current hosts send their cursor shape and don't need this)\n"
             "      --no-hw            software decoding only\n"
             "      --h264             ask for H.264 instead of HEVC\n"
             "      --vsync            sync presentation to the monitor (smoother, adds latency)\n"

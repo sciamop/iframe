@@ -137,6 +137,23 @@ static void send_stats(Streamer *s, int *bitrate, uint64_t last_drop) {
     s->send(s->ctx, MSG_STATS, (const uint8_t *)json, (uint32_t)n);
 }
 
+/// Payload: hotspot x, y, size w, h (u16, points), then the PNG — what the Mac host sends.
+static void send_cursor(Streamer *s) {
+    CursorImage shape;
+    if (!capture_cursor_shape(s->cap, &shape)) return;
+    uint8_t *buf = malloc(8 + shape.png_len);
+    if (buf) {
+        put_u16(buf, shape.hot_x);
+        put_u16(buf + 2, shape.hot_y);
+        put_u16(buf + 4, shape.width);
+        put_u16(buf + 6, shape.height);
+        memcpy(buf + 8, shape.png, shape.png_len);
+        s->send(s->ctx, MSG_CURSOR, buf, (uint32_t)(8 + shape.png_len));
+        free(buf);
+    }
+    free(shape.png);
+}
+
 static void *run(void *arg) {
     Streamer *s = arg;
     const uint64_t interval = 1000000000ull / s->cfg.fps;
@@ -149,6 +166,7 @@ static void *run(void *arg) {
     for (;;) {
         uint64_t now = now_nanos();
         if (capture_poll_changes(s->cap)) dirty = true;
+        if (s->cfg.local_cursor) send_cursor(s);
 
         pthread_mutex_lock(&s->lock);
         bool stopping = s->stopping;
@@ -232,6 +250,7 @@ Streamer *streamer_start(Capture *cap, Encoder *enc, StreamConfig cfg, SendFn se
     s->ctx = ctx;
     s->force_keyframe = true;
     s->wake_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    capture_set_local_cursor(cap, cfg.local_cursor);
     pthread_mutex_init(&s->lock, NULL);
     pthread_create(&s->thread, NULL, run, s);
     return s;

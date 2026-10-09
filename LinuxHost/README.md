@@ -14,8 +14,12 @@ XTest input injection                                     └─
 
 The design matches the Mac host:
 
-- **Only changed frames are sent.** XDamage, the cursor shape and pointer motion decide when to
-  capture, so a static screen sends nothing.
+- **Local cursor.** Clients that ask for it (all current ones do) get the XFixes cursor shape as a
+  PNG whenever it changes, and the pointer is left out of the video. They draw it at their own
+  pointer position, so it moves with no network delay and moving it costs no frames. Older
+  clients get the cursor composited into the video instead.
+- **Only changed frames are sent.** XDamage decides when to capture (plus the cursor shape and
+  pointer motion when the cursor is in the video), so a static screen sends nothing.
 - **One frame at a time** goes through capture, encode and send.
 - **At most 3 frames unacknowledged.** When the link backs up, frames are skipped before
   encoding, and the newest screen goes out as soon as an ack arrives.
