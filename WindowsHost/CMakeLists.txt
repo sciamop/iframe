@@ -15,6 +15,7 @@ add_library(host OBJECT
     src/encoder.cpp
     src/streamer.cpp
     src/input.cpp
+    src/service.cpp
     # Protocol helpers shared with the Linux client (JSON, key table).
     ../Linux/src/json.c
     ../Linux/src/keymap.c
@@ -22,7 +23,7 @@ add_library(host OBJECT
 target_compile_definitions(host PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_RAND_S UNICODE _UNICODE
     _WIN32_WINNT=0x0A00 WINVER=0x0A00)
 target_compile_options(host PRIVATE /utf-8 /W3 /wd4244)
-set(LIBS ws2_32 iphlpapi dnsapi dxgi d3d11 shell32 ole32 mfplat mfuuid windowscodecs strmiids)
+set(LIBS ws2_32 iphlpapi dnsapi dxgi d3d11 user32 advapi32 shell32 ole32 mfplat mfuuid windowscodecs strmiids)
 
 # The console program, for running by hand.
 add_executable(iframe-windows-host $<TARGET_OBJECTS:host>)

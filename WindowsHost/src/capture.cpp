@@ -1,5 +1,6 @@
 #include "host.h"  // first: winsock2.h has to come before windows.h
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,6 +90,7 @@ void capture_list_monitors(void) {
 
 static HRESULT duplicate(Capture *c) {
     c->dup.Reset();
+    desktop_follow_input();  // the sign-in screen and UAC prompts are on another desktop
     // DuplicateOutput1 asks for BGRA explicitly, which also works when the desktop is HDR.
     ComPtr<IDXGIOutput5> output5;
     if (SUCCEEDED(c->output.As(&output5))) {
@@ -99,16 +101,79 @@ static HRESULT duplicate(Capture *c) {
     return c->output->DuplicateOutput(c->device.Get(), &c->dup);
 }
 
-Capture *capture_open(int monitor, char *err, size_t err_cap) {
+// monitor: -1 = the primary. -1 when there's no such monitor.
+static int pick_monitor(const Monitor *m, int n, int monitor) {
+    if (monitor >= 0) return monitor < n ? monitor : -1;
+    for (int i = 0; i < n; i++)
+        if (is_primary(m[i].desc)) return i;
+    return n ? 0 : -1;
+}
+
+bool capture_match_mode(int monitor, int width, int height) {
     Monitor m[16];
-    int n = enumerate(m, 16), pick = -1;
-    if (monitor >= 0) {
-        if (monitor < n) pick = monitor;
-    } else {
-        for (int i = 0; i < n && pick < 0; i++)
-            if (is_primary(m[i].desc)) pick = i;
-        if (pick < 0 && n) pick = 0;
+    int n = enumerate(m, 16), pick = pick_monitor(m, n, monitor);
+    if (pick < 0 || width <= 0 || height <= 0) return false;
+    const wchar_t *device = m[pick].desc.DeviceName;
+    DEVMODEW cur = {};
+    cur.dmSize = sizeof cur;
+    if (!EnumDisplaySettingsW(device, ENUM_CURRENT_SETTINGS, &cur)) return false;
+
+    // The closest shape wins (within 1%, so 16:10 and 1680x1050 count as one), then the largest
+    // that fits the client, else the smallest that doesn't; then the current refresh rate, else
+    // the highest.
+    double want = log((double)width / height);
+    DEVMODEW best = {}, mode = {};
+    double best_shape = 1e9;
+    mode.dmSize = sizeof mode;
+    for (DWORD i = 0; EnumDisplaySettingsW(device, i, &mode); i++) {
+        if (mode.dmBitsPerPel != cur.dmBitsPerPel || mode.dmPelsWidth < 640 || mode.dmPelsHeight < 480) continue;
+        double shape = fabs(log((double)mode.dmPelsWidth / mode.dmPelsHeight) - want);
+        if (shape > best_shape + 0.01) continue;
+        bool better;
+        if (shape < best_shape - 0.01) {
+            better = true;
+        } else {
+            DWORD area = mode.dmPelsWidth * mode.dmPelsHeight, best_area = best.dmPelsWidth * best.dmPelsHeight;
+            bool fits = (int)mode.dmPelsWidth <= width && (int)mode.dmPelsHeight <= height;
+            bool best_fits = (int)best.dmPelsWidth <= width && (int)best.dmPelsHeight <= height;
+            if (area != best_area || fits != best_fits)
+                better = fits != best_fits ? fits : fits ? area > best_area : area < best_area;
+            else if (mode.dmDisplayFrequency == cur.dmDisplayFrequency || best.dmDisplayFrequency == cur.dmDisplayFrequency)
+                better = mode.dmDisplayFrequency == cur.dmDisplayFrequency;
+            else
+                better = mode.dmDisplayFrequency > best.dmDisplayFrequency;
+        }
+        if (better) {
+            best = mode;
+            if (shape < best_shape) best_shape = shape;
+        }
     }
+    if (!best.dmPelsWidth) return false;
+    if (best.dmPelsWidth == cur.dmPelsWidth && best.dmPelsHeight == cur.dmPelsHeight &&
+        best.dmDisplayFrequency == cur.dmDisplayFrequency)
+        return false;
+    best.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY | DM_BITSPERPEL;
+    // Not saved in the registry: capture_restore_mode (or signing out, or a restart) undoes it.
+    LONG rc = ChangeDisplaySettingsExW(device, &best, NULL, 0, NULL);
+    if (rc != DISP_CHANGE_SUCCESSFUL) {
+        host_log("couldn't switch the monitor to %lux%lu (%ld)", best.dmPelsWidth, best.dmPelsHeight, rc);
+        return false;
+    }
+    host_log("switched the monitor from %lux%lu to %lux%lu @ %lu Hz for a %dx%d client", cur.dmPelsWidth,
+             cur.dmPelsHeight, best.dmPelsWidth, best.dmPelsHeight, best.dmDisplayFrequency, width, height);
+    return true;
+}
+
+void capture_restore_mode(void) {
+    LONG rc = ChangeDisplaySettingsExW(NULL, NULL, NULL, 0, NULL);
+    if (rc == DISP_CHANGE_SUCCESSFUL) host_log("restored the monitor's resolution");
+    else host_log("couldn't restore the monitor's resolution (%ld)", rc);
+}
+
+Capture *capture_open(int monitor, char *err, size_t err_cap, bool *blocked) {
+    if (blocked) *blocked = false;
+    Monitor m[16];
+    int n = enumerate(m, 16), pick = pick_monitor(m, n, monitor);
     if (pick < 0) {
         snprintf(err, err_cap, n ? "no monitor %d (there are %d)" : "no monitors found", monitor, n);
         return NULL;
@@ -139,6 +204,7 @@ Capture *capture_open(int monitor, char *err, size_t err_cap) {
 
     hr = duplicate(c);
     if (FAILED(hr)) {
+        if (blocked) *blocked = hr == E_ACCESSDENIED;
         snprintf(err, err_cap,
                  hr == E_ACCESSDENIED ? "can't capture the screen right now (lock screen or UAC prompt?)"
                  : hr == DXGI_ERROR_UNSUPPORTED ? "Desktop Duplication isn't supported on %s"

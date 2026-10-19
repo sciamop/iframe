@@ -45,25 +45,31 @@ The design matches the Mac and Linux hosts:
 WindowsHost\install.ps1
 ```
 
-This builds the host and installs it in `%LOCALAPPDATA%\Programs\iFrame`. It also:
+This builds the host and installs it in `%ProgramFiles%\iFrame` (one UAC prompt). It also:
 
 - creates a PIN in `%APPDATA%\iframe\windows-host-pin`;
-- allows the host through Windows Firewall on private and domain networks (one UAC prompt);
-- registers the **iFrame Windows host** task, which starts the host at login with no window and
-  restarts it if it stops.
+- allows the host through Windows Firewall on private and domain networks;
+- registers the **iFrame Windows host** service. It starts at boot and runs the host as SYSTEM on
+  the session that's on the physical screen, and starts it again if it stops or that session
+  changes. Windows only lets SYSTEM capture and control the **secure desktop**, so clients also
+  see and use the lock screen, the sign-in screen (even after a restart) and UAC prompts, and can
+  control elevated windows (Task Manager, installers, admin terminals).
 
-The log is `%LOCALAPPDATA%\iframe\windows-host.log`.
+The log is `%ProgramData%\iFrame\windows-host.log`.
 
 ```powershell
-Start-ScheduledTask 'iFrame Windows host'     # start / Stop-ScheduledTask to stop
-Get-Content $env:LOCALAPPDATA\iframe\windows-host.log -Wait
+Restart-Service iFrameWindowsHost             # from an admin PowerShell; or Stop-/Start-Service
+Get-Content $env:ProgramData\iFrame\windows-host.log -Wait
 Get-Content $env:APPDATA\iframe\windows-host-pin
+WindowsHost\install.ps1 -Restart              # e.g. after changing the PIN
 WindowsHost\install.ps1 -Uninstall            # keeps the PIN and the log
 ```
 
-Windows doesn't let a normal program control elevated windows (Task Manager, installers, admin
-terminals). To control those too, install from an admin PowerShell with
-`WindowsHost\install.ps1 -Elevated`, which runs the host as administrator.
+`WindowsHost\install.ps1 -LoginTask` installs the old way instead: in
+`%LOCALAPPDATA%\Programs\iFrame`, started as you at login by the **iFrame Windows host** task,
+logging to `%LOCALAPPDATA%\iframe\windows-host.log`. It can't show the lock or sign-in screens or
+UAC prompts; the stream pauses while one is up. Add `-Elevated` (from an admin PowerShell) so it
+can control elevated windows.
 
 Or run it by hand: `WindowsHost\build.cmd`, then `WindowsHost\build\iframe-windows-host.exe --pin 123456`.
 Windows asks once whether to allow it through the firewall; allow private networks.
@@ -85,6 +91,9 @@ so it shows up in every client's host list.
 | `--pin <digits>` | default: `%APPDATA%\iframe\windows-host-pin`, else random each launch |
 | `--cmd-key auto\|ctrl\|win` | what ⌘ becomes, see below |
 | `--no-publish` | don't advertise over Bonjour |
+| `--keep-resolution` | don't switch the monitor's resolution to the client's shape |
+| `--pin-file <path>` | where the PIN is kept |
+| `--log <path>` | where to log when there's no console |
 
 ## Keys
 
@@ -101,6 +110,15 @@ decision is what ⌘ becomes:
 `--cmd-key ctrl|win` overrides this. Text from the iPad's on-screen keyboard is typed as Unicode.
 Ctrl+Alt+Delete can't be sent: Windows reserves it.
 
+## Resolution
+
+When a client connects, the host switches the monitor to its supported mode closest to the
+client's screen or window: the same shape first (16:10 for a MacBook, 4:3 for an iPad), then the
+largest that fits. So the stream fills the client with no black bars. The change isn't saved, and
+the monitor goes back to its own resolution when the client disconnects (or at the next sign-in
+or restart, if the host is ended abruptly). The Mac client's "Use the Mac's own display" option
+and `--keep-resolution` keep the monitor's resolution.
+
 ## Performance
 
 Measured on an RTX 4090 at 3440×1440 (NVIDIA's H.264 and HEVC encoders through Media
@@ -108,12 +126,9 @@ Foundation): about 5–6 ms to convert and encode a frame.
 
 ## Not yet / next steps
 
-- **No virtual display.** It streams an existing monitor, and the client letterboxes it.
-  Display-shape requests are logged and ignored. A matching display needs an indirect display
-  driver (IddCx), which has to be signed.
-- **No UAC prompts, lock screen or sign-in screen.** These are on the secure desktop, which only
-  a service running as SYSTEM can capture or control. The stream pauses while one is shown and
-  resumes afterwards.
+- **No virtual display.** It streams an existing monitor, switched to the mode closest to the
+  client's shape (see Resolution). It doesn't follow later window resizes, and an exact match
+  needs an indirect display driver (IddCx), which has to be signed.
 - **No cursor for clients that can't draw it.** All current clients draw the cursor themselves.
   An older client sees no pointer, because Windows never puts it in the captured frames.
 - **Rotated monitors** stream sideways.

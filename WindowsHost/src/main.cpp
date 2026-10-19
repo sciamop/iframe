@@ -11,6 +11,7 @@
 #include <time.h>
 
 #include <iphlpapi.h>
+#include <shellapi.h>
 #include <shlobj.h>
 #include <windns.h>
 #include <ws2tcpip.h>
@@ -25,6 +26,10 @@ static struct {
     char pin[64] = "";
     enum CmdMode cmd = CMD_AUTO;
     bool publish = true;
+    bool match_resolution = true;    // switch the monitor to the client's shape while it's connected
+    wchar_t pin_file[MAX_PATH] = L"";
+    wchar_t log_file[MAX_PATH] = L"";
+    wchar_t quit_event[128] = L"";   // set by the service to stop us
 } cfg;
 
 static SRWLOCK log_lock = SRWLOCK_INIT;
@@ -68,6 +73,33 @@ static int failed_attempts;
 static char host_name[128] = "Windows";
 static Input *input;                     // shared; only the active session drives it
 static SRWLOCK input_lock = SRWLOCK_INIT;
+static SRWLOCK mode_lock = SRWLOCK_INIT;
+static Session *mode_owner;              // the session the monitor's resolution was switched for
+
+/// Shapes the monitor like the client's screen (width x height pixels). uiScale <= 0 means the
+/// client wants this display as it is.
+static void match_mode(Session *s, int width, int height, double ui_scale) {
+    AcquireSRWLockExclusive(&mode_lock);
+    desktop_follow_input();
+    if (cfg.match_resolution && ui_scale > 0 && width > 0 && height > 0) {
+        // A client replacing another takes over restoring the resolution, even when it's the same.
+        if (capture_match_mode(cfg.monitor, width, height) || mode_owner) mode_owner = s;
+    } else if (mode_owner) {
+        capture_restore_mode();
+        mode_owner = NULL;
+    }
+    ReleaseSRWLockExclusive(&mode_lock);
+}
+
+static void restore_mode(Session *s) {
+    AcquireSRWLockExclusive(&mode_lock);
+    if (mode_owner == s) {
+        desktop_follow_input();
+        capture_restore_mode();
+        mode_owner = NULL;
+    }
+    ReleaseSRWLockExclusive(&mode_lock);
+}
 
 static void session_send(void *ctx, uint8_t type, const uint8_t *payload, uint32_t len) {
     Session *s = (Session *)ctx;
@@ -88,7 +120,13 @@ static bool constant_time_equals(const char *a, const char *b) {
 
 static bool start_stream(Session *s, bool supports_hevc, int max_fps, bool local_cursor) {
     char err[256];
-    s->cap = capture_open(cfg.monitor, err, sizeof err);
+    // Capture can be blocked for a moment, e.g. right after a resolution change.
+    bool blocked = false;
+    for (int tries = 0; tries < 10; tries++) {
+        s->cap = capture_open(cfg.monitor, err, sizeof err, &blocked);
+        if (s->cap || !blocked) break;
+        Sleep(300);
+    }
     if (!s->cap) {
         host_log("could not start stream: %s", err);
         return false;
@@ -120,6 +158,7 @@ static bool start_stream(Session *s, bool supports_hevc, int max_fps, bool local
 
     enum CmdMode cmd = cfg.cmd != CMD_AUTO ? cfg.cmd : s->pc_client ? CMD_WIN : CMD_CTRL;
     AcquireSRWLockExclusive(&input_lock);
+    desktop_follow_input();
     input_set_region(input, capture_monitor_rect(s->cap));
     input_set_cmd(input, cmd);
     input_keep_awake(input);
@@ -150,7 +189,7 @@ static bool start_stream(Session *s, bool supports_hevc, int max_fps, bool local
 }
 
 static bool handle_hello(Session *s, const char *j, size_t len) {
-    double version = 0, max_fps = 0;
+    double version = 0, max_fps = 0, width = 0, height = 0, ui_scale = 0;
     char pin[128] = "", name[96] = "client", os[32] = "";
     bool hevc = false, local_cursor = false;
     json_number(j, len, "version", &version);
@@ -160,6 +199,10 @@ static bool handle_hello(Session *s, const char *j, size_t len) {
     json_bool(j, len, "supportsHEVC", &hevc);
     json_number(j, len, "maxFPS", &max_fps);
     json_bool(j, len, "localCursor", &local_cursor);
+    // The client's screen, in "display" (the only object in a hello, so its keys are unique).
+    json_number(j, len, "width", &width);
+    json_number(j, len, "height", &height);
+    json_number(j, len, "uiScale", &ui_scale);
     char peer[64];
     snprintf(peer, sizeof peer, "%s", s->name);  // still just the address
     snprintf(s->name, sizeof s->name, "%s (%s)", name, peer);
@@ -189,6 +232,7 @@ static bool handle_hello(Session *s, const char *j, size_t len) {
     }
     s->authenticated = true;
     host_log("%s connected", s->name);
+    match_mode(s, (int)width, (int)height, ui_scale);
     return start_stream(s, hevc, (int)max_fps, local_cursor);
 }
 
@@ -220,11 +264,13 @@ static void handle_message(Session *s, uint8_t type, const uint8_t *p, uint32_t 
         return;
     }
     if (type == MSG_DISPLAY) {
-        host_log("%s asked for a %.*s display; streaming the existing monitor", s->name, (int)len, (const char *)p);
+        // Clients only reshape virtual displays, and this host says it has none.
+        host_log("%s asked for a %.*s display; keeping the current resolution", s->name, (int)len, (const char *)p);
         return;
     }
     if (!is_active(s)) return;
     AcquireSRWLockExclusive(&input_lock);
+    desktop_follow_input();
     switch (type) {
     case MSG_MOUSE_MOVE:
         if (len >= 8) input_move(input, get_f32(p), get_f32(p + 4));
@@ -283,6 +329,7 @@ static DWORD WINAPI session_thread(void *arg) {
         input_release_all(input);
         ReleaseSRWLockExclusive(&input_lock);
     }
+    restore_mode(s);
     AcquireSRWLockExclusive(&server_lock);
     closesocket(s->fd);
     for (int i = 0; i < session_count; i++)
@@ -337,28 +384,39 @@ static void unpublish(void) {
     DnsServiceFreeInstance(registration.pServiceInstance);
 }
 
-static void pin_path(char *out, size_t cap) {
+/// --pin-file, else %APPDATA%\iframe\windows-host-pin.
+static void pin_path(wchar_t *out, size_t cap) {
     wchar_t *appdata = NULL;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, NULL, &appdata))) {
-        snprintf(out, cap, "%ls\\iframe\\windows-host-pin", appdata);
+    if (cfg.pin_file[0]) {
+        swprintf(out, cap, L"%ls", cfg.pin_file);
+    } else if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, NULL, &appdata))) {
+        swprintf(out, cap, L"%ls\\iframe\\windows-host-pin", appdata);
         CoTaskMemFree(appdata);
     } else {
-        snprintf(out, cap, "windows-host-pin");
+        swprintf(out, cap, L"windows-host-pin");
     }
 }
 
-/// iframe-windows-hostw.exe (the login task) has no console: its output goes to
-/// %LOCALAPPDATA%\iframe\windows-host.log, which keeps one older copy past 4 MB.
+/// iframe-windows-hostw.exe (the login task, or the service's host) and the service have no
+/// console: their output goes to --log, else %LOCALAPPDATA%\iframe\windows-host.log. It keeps one
+/// older copy past 4 MB.
 static void log_to_file_without_console(void) {
-    if (GetStdHandle(STD_OUTPUT_HANDLE)) return;  // a console, or redirected by whoever started us
+    if (!cfg.log_file[0] && GetStdHandle(STD_OUTPUT_HANDLE)) return;  // a console, or redirected by whoever started us
+    wchar_t path[MAX_PATH], dir[MAX_PATH], old[MAX_PATH];
     wchar_t *local = NULL;
-    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, NULL, &local))) return;
-    wchar_t dir[MAX_PATH], path[MAX_PATH], old[MAX_PATH];
-    swprintf(dir, MAX_PATH, L"%ls\\iframe", local);
-    swprintf(path, MAX_PATH, L"%ls\\windows-host.log", dir);
-    swprintf(old, MAX_PATH, L"%ls\\windows-host.old.log", dir);
-    CoTaskMemFree(local);
+    if (cfg.log_file[0]) {
+        swprintf(path, MAX_PATH, L"%ls", cfg.log_file);
+    } else if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, NULL, &local))) {
+        swprintf(path, MAX_PATH, L"%ls\\iframe\\windows-host.log", local);
+        CoTaskMemFree(local);
+    } else {
+        return;
+    }
+    swprintf(dir, MAX_PATH, L"%ls", path);
+    wchar_t *slash = wcsrchr(dir, L'\\');
+    if (slash) *slash = 0;
     CreateDirectoryW(dir, NULL);
+    swprintf(old, MAX_PATH, L"%.*ls.old.log", (int)(wcslen(path) > 4 ? wcslen(path) - 4 : wcslen(path)), path);
     WIN32_FILE_ATTRIBUTE_DATA info;
     if (GetFileAttributesExW(path, GetFileExInfoStandard, &info) && (info.nFileSizeHigh || info.nFileSizeLow > (4u << 20)))
         MoveFileExW(path, old, MOVEFILE_REPLACE_EXISTING);
@@ -368,9 +426,9 @@ static void log_to_file_without_console(void) {
 
 static void load_pin(void) {
     if (cfg.pin[0]) return;
-    char path[MAX_PATH * 2];
-    pin_path(path, sizeof path);
-    FILE *f = fopen(path, "r");
+    wchar_t path[MAX_PATH];
+    pin_path(path, MAX_PATH);
+    FILE *f = _wfopen(path, L"r");
     if (f) {
         if (fgets(cfg.pin, sizeof cfg.pin, f)) cfg.pin[strcspn(cfg.pin, "\r\n \t")] = 0;
         fclose(f);
@@ -403,8 +461,8 @@ static void print_addresses(void) {
 }
 
 static void usage(FILE *f) {
-    char path[MAX_PATH * 2];
-    pin_path(path, sizeof path);
+    wchar_t path[MAX_PATH];
+    pin_path(path, MAX_PATH);
     fprintf(f,
             "iframe-windows-host — stream this Windows desktop to iFrame clients\n"
             "\n"
@@ -415,37 +473,62 @@ static void usage(FILE *f) {
             "  --monitor <n>     monitor index from --list (default: the primary monitor)\n"
             "  --list            list monitors and the GPU driving each, then exit\n"
             "  --inflight <n>    max unacknowledged frames before skipping (default 3)\n"
-            "  --pin <digits>    PIN (default: %s, else random each launch)\n"
+            "  --pin <digits>    PIN (default: the one in --pin-file, else random each launch)\n"
+            "  --pin-file <path> where the PIN is kept (default %ls)\n"
             "  --cmd-key <k>     what ⌘ becomes: auto (default: Ctrl for the iPad and Mac, the Windows key\n"
             "                    for Windows and Linux clients, which send their own Ctrl as ⌃), ctrl, or win\n"
-            "  --no-publish      don't advertise over Bonjour\n",
+            "  --no-publish      don't advertise over Bonjour\n"
+            "  --keep-resolution don't switch the monitor to the client's screen shape\n"
+            "  --log <path>      log here when there's no console (default %%LOCALAPPDATA%%\\iframe\\windows-host.log)\n"
+            "  --service         run as the Windows service install.ps1 sets up: it starts the host as\n"
+            "                    SYSTEM, so it can show and control the lock and sign-in screens\n",
             IFRAME_DEFAULT_PORT, path);
 }
 
 static volatile LONG quitting;
 static SOCKET listener = INVALID_SOCKET;
 
+static void quit(void) {
+    InterlockedExchange(&quitting, 1);
+    closesocket(listener);  // wakes accept()
+}
+
 static BOOL WINAPI on_console_event(DWORD type) {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT || type == CTRL_CLOSE_EVENT || type == CTRL_SHUTDOWN_EVENT) {
-        InterlockedExchange(&quitting, 1);
-        closesocket(listener);  // wakes accept()
+        quit();
         return TRUE;
     }
     return FALSE;
 }
 
+static DWORD WINAPI wait_for_quit_event(void *event) {
+    WaitForSingleObject((HANDLE)event, INFINITE);
+    host_log("the service asked the host to quit");
+    quit();
+    return 0;
+}
+
 int main(int argc, char **argv) {
-    log_to_file_without_console();
     SetConsoleOutputCP(CP_UTF8);
     // Physical pixels everywhere: capture, input and the monitor list.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
+    // Paths come from the wide command line, so any characters survive.
+    int wargc = 0;
+    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+    if (!wargv || wargc != argc) return 70;
+    bool service = false;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
         bool has = v != NULL;
         if (!strcmp(a, "--help") || !strcmp(a, "-h")) { usage(stdout); return 0; }
         else if (!strcmp(a, "--list")) { capture_list_monitors(); return 0; }
         else if (!strcmp(a, "--no-publish")) cfg.publish = false;
+        else if (!strcmp(a, "--keep-resolution")) cfg.match_resolution = false;
+        else if (!strcmp(a, "--service")) service = true;
+        else if (!strcmp(a, "--pin-file") && has) swprintf(cfg.pin_file, MAX_PATH, L"%ls", wargv[++i]);
+        else if (!strcmp(a, "--log") && has) swprintf(cfg.log_file, MAX_PATH, L"%ls", wargv[++i]);
+        else if (!strcmp(a, "--quit-event") && has) swprintf(cfg.quit_event, 128, L"%ls", wargv[++i]);
         else if (!strcmp(a, "--port") && has) cfg.port = atoi(argv[++i]);
         else if (!strcmp(a, "--fps") && has) cfg.fps = atoi(argv[++i]) > 0 ? atoi(argv[i]) : 1;
         else if (!strcmp(a, "--mbps") && has) cfg.mbps = atof(argv[++i]);
@@ -463,18 +546,35 @@ int main(int argc, char **argv) {
         }
         else { usage(stderr); return 64; }
     }
+    log_to_file_without_console();
+    if (service) {
+        // The host it starts gets the same options.
+        static wchar_t args[3072];
+        size_t n = 0;
+        for (int i = 1; i < wargc && n < 2900; i++)
+            if (wcscmp(wargv[i], L"--service"))
+                n += swprintf(args + n, 3072 - n, wcschr(wargv[i], L' ') ? L" \"%ls\"" : L" %ls", wargv[i]);
+        return service_run(args);
+    }
+    if (cfg.quit_event[0]) {
+        HANDLE event = OpenEventW(SYNCHRONIZE, FALSE, cfg.quit_event);
+        if (event) CloseHandle(CreateThread(NULL, 0, wait_for_quit_event, event, 0, NULL));
+    }
     load_pin();
     DWORD name_len = sizeof host_name;
     GetComputerNameExA(ComputerNameDnsHostname, host_name, &name_len);
 
-    // Fail early (and visibly) if the monitor can't be found.
+    // Fail early (and visibly) if the monitor can't be found. A locked desktop is only temporary
+    // (at login it often is for a moment), so wait for it rather than exit.
     char err[256];
-    Capture *probe = capture_open(cfg.monitor, err, sizeof err);
-    if (!probe) {
-        host_log("%s", err);
-        return 1;
+    bool blocked;
+    for (bool logged = false;; logged = true) {
+        Capture *probe = capture_open(cfg.monitor, err, sizeof err, &blocked);
+        if (probe) { capture_close(probe); break; }
+        if (!blocked) { host_log("%s", err); return 1; }
+        if (!logged) host_log("%s; waiting for it", err);
+        Sleep(2000);
     }
-    capture_close(probe);
     input = input_open();
 
     WSADATA wsa;

@@ -45,8 +45,13 @@ struct Capture;
 // Prints every monitor and the GPU that drives it.
 void capture_list_monitors(void);
 // monitor: -1 = the primary monitor, else an index from capture_list_monitors().
-Capture *capture_open(int monitor, char *err, size_t err_cap);
+// blocked (optional) is set when the desktop can't be captured for now (lock screen, UAC).
+Capture *capture_open(int monitor, char *err, size_t err_cap, bool *blocked = NULL);
 void capture_close(Capture *c);
+// Switches the monitor to its mode closest in shape, then size, to a width x height client screen.
+// True when it changed the mode; capture_restore_mode puts back the saved one.
+bool capture_match_mode(int monitor, int width, int height);
+void capture_restore_mode(void);
 int capture_width(Capture *c);
 int capture_height(Capture *c);
 int capture_refresh_hz(Capture *c);
@@ -102,6 +107,14 @@ void input_key(Input *in, int mac_code, int action, uint32_t mods);
 void input_text(Input *in, const char *utf8, size_t len);
 void input_release_all(Input *in);
 void input_keep_awake(Input *in);
+
+// service.cpp — Windows only lets SYSTEM capture and control the secure desktop (the lock and
+// sign-in screens, UAC prompts). Installed as a service, the host runs as SYSTEM in the console
+// session and its capture and input threads follow whichever desktop has the input.
+int service_run(const wchar_t *child_args);
+// Moves the calling thread to the desktop that currently receives input. A host that isn't SYSTEM
+// can't open the secure desktop, and stays where it is.
+void desktop_follow_input(void);
 
 // streamer.cpp — capture → encode → send, with ack-based flow control, idle refinement and
 // adaptive bitrate (same design as Host/Streamer.swift and LinuxHost/src/streamer.c).
