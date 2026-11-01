@@ -17,6 +17,12 @@ final class VideoDecoder {
         session = nil
     }
 
+    /// Forgets the stream entirely, e.g. between connections.
+    func reset() {
+        invalidate()
+        formatDescription = nil
+    }
+
     @discardableResult
     func setFormat(codec: VideoCodec, parameterSets: [Data]) -> Bool {
         guard !parameterSets.isEmpty else { return false }
@@ -58,6 +64,10 @@ final class VideoDecoder {
 
         invalidate()
         formatDescription = format
+        return makeSession(format)
+    }
+
+    private func makeSession(_ format: CMVideoFormatDescription) -> Bool {
         let attributes: [CFString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
@@ -82,7 +92,10 @@ final class VideoDecoder {
 
     /// Decodes one access unit. Returns false if it could not be decoded (caller should request a keyframe).
     func decode(_ data: Data) -> Bool {
-        guard let session, let format = formatDescription, !data.isEmpty else { return false }
+        guard let format = formatDescription, !data.isEmpty else { return false }
+        // The host only resends the format when it changes, so rebuild a torn-down session here.
+        if session == nil, !makeSession(format) { return false }
+        guard let session else { return false }
 
         var block: CMBlockBuffer?
         var status = CMBlockBufferCreateWithMemoryBlock(
@@ -114,7 +127,7 @@ final class VideoDecoder {
             self?.onFrame?(imageBuffer)
         }
         if decodeStatus == kVTInvalidSessionErr {
-            // iOS tears decoders down when the app is backgrounded; rebuild on the next format message.
+            // iOS tears decoders down when the app is backgrounded; the next decode rebuilds it.
             invalidate()
         }
         return decodeStatus == noErr && decoded

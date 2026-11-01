@@ -68,10 +68,20 @@ final class StreamSession: ObservableObject {
     /// Mac points per client pixel choice (see DisplayRequest). 0 = use the Mac's own display.
     private var uiScale: Double = 2
 
+    /// The last connect() call, replayed by resume().
+    private var lastConnect: (endpoint: NWEndpoint, pin: String, label: String, deviceName: String, maxFPS: Int)?
+
+    /// Set by the app while it is in the background. A connection that drops then is
+    /// re-established on resume() instead of being reported as a failure.
+    var inBackground = false
+    private var resumeOnActivate = false
+
     /// `pixels` is the client's screen (or window) size in pixels.
     func connect(to endpoint: NWEndpoint, pin: String, label: String, deviceName: String, maxFPS: Int,
                  pixels: CGSize, uiScale: Double) {
         self.uiScale = uiScale
+        lastConnect = (endpoint, pin, label, deviceName, maxFPS)
+        resumeOnActivate = false
         hostLabel = label
         phase = .connecting
         stats = ClientStats()
@@ -124,12 +134,34 @@ final class StreamSession: ObservableObject {
 
     func disconnect() {
         phase = .idle
+        resumeOnActivate = false
         queue.async { self.teardown() }
+    }
+
+    /// Drops the connection but remembers to bring it back on resume(). Main thread.
+    func suspend() {
+        guard phase == .streaming || phase == .connecting else { return }
+        disconnect()
+        resumeOnActivate = true
+    }
+
+    /// Reconnects to the last host if the session was suspended (or dropped) in the background. Main thread.
+    func resume(pixels: CGSize) {
+        guard resumeOnActivate, let last = lastConnect else { return }
+        connect(to: last.endpoint, pin: last.pin, label: last.label, deviceName: last.deviceName,
+                maxFPS: last.maxFPS, pixels: pixels, uiScale: uiScale)
     }
 
     private func fail(_ message: String) {
         teardown()
-        DispatchQueue.main.async { self.phase = .failed(message) }
+        DispatchQueue.main.async {
+            if self.inBackground, self.phase == .streaming || self.phase == .connecting {
+                self.phase = .idle
+                self.resumeOnActivate = true
+            } else {
+                self.phase = .failed(message)
+            }
+        }
     }
 
     private func teardown() {
@@ -138,7 +170,7 @@ final class StreamSession: ObservableObject {
         let old = channel
         channel = nil
         old?.cancel()
-        decoder.invalidate()
+        decoder.reset()
         displayFormat = nil
         renderer?.flush(removingDisplayedImage: true, completionHandler: nil)
     }
